@@ -1,0 +1,32 @@
+# === Julia-specific ===
+# Do NOT ignore Manifest.toml in research repos! (we want reproducibility)
+
+# Local package server & compiled files
+.julia/
+*.jl.*.cov
+*.jl.mem
+*.jld2
+*.h5
+*.hdf5
+*.arrow
+
+# === Large or auto-generated outputs ===
+/data/*.csv
+/data/*.jld2
+/results/
+/figures/
+/plots/
+/output/
+/logs/
+
+# === OS & editor junk ===
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.vscode/settings.json
+*.code-workspace
+
+# === Secrets (never commit these) ===
+.env
+secrets.jl
