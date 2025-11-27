@@ -1,37 +1,37 @@
-module CFAgent
+module CF_Model
 
-using RxInfer, Distributions, LinearAlgebra
+using RxInfer, Distributions
+
+export cf_agent, make_constraints
 
 # ==============================================================================
-#  The Generalized HGF with Circulatory Fidelity (Structured Variational)
+#  The Generative Model
 # ==============================================================================
+# This implements the hierarchical structure defined in Equation 2.1 of the thesis.
+# Level 3: Gamma_CF (Static Hyperparameter for Volatility Precision)
+# Level 2: z (Log-Volatility Random Walk)
+# Level 1: x (Perceptual State / Observation)
 
-"""
-    make_model(y; mode=:closed_loop)
-
-Constructs the Hierarchical Gaussian Filter for active inference.
-- `y`: Observation vector
-- `mode`: :closed_loop (CF enabled) or :open_loop (Standard Mean Field)
-"""
-@model function hgf_agent(y, prior_cf_shape, prior_cf_rate)
-    # --- Level 3: Circulatory Fidelity (Precision of Volatility) ---
-    # In the closed loop model, this remains coupled to Level 2.
-    γ_cf ~ Gamma(shape = prior_cf_shape, rate = prior_cf_rate)
+@model function cf_agent(y)
+    # --- Level 3: Circulatory Fidelity ---
+    # Modeled as a Gamma prior on the precision of the volatility transition.
+    # In the "Closed Loop" case, this node remains active in the variational posterior.
+    γ_cf ~ Gamma(shape = 1.0, rate = 1.0)
 
     # --- Level 2: Volatility States (z) ---
-    # We model log-volatility as a random walk governed by γ_cf
+    # Initial state
     z[1] ~ Normal(mean = 0.0, precision = γ_cf)
     
     # --- Level 1: Perceptual States (x) ---
-    # Volatility determines the variance of x
+    # Initial state (variance depends on z)
     x[1] ~ Normal(mean = 0.0, precision = exp(z[1]))
-    y[1] ~ Normal(mean = x[1], precision = 10.0) # Low observation noise
+    y[1] ~ Normal(mean = x[1], precision = 10.0) # Fixed sensory precision (high SNR)
 
     for t in 2:length(y)
-        # Level 2 Evolution (The "Circulatory" Step)
+        # Random walk for volatility, governed by CF
         z[t] ~ Normal(mean = z[t-1], precision = γ_cf)
         
-        # Level 1 Evolution
+        # State transition with volatility-dependent variance
         x[t] ~ Normal(mean = x[t-1], precision = exp(z[t]))
         
         # Observation
@@ -40,22 +40,29 @@ Constructs the Hierarchical Gaussian Filter for active inference.
 end
 
 # ==============================================================================
-#  Variational Constraints (The Core Innovation)
+#  Constraint Factories (The Thesis "Intervention")
 # ==============================================================================
 
-# 1. Standard HGF (Open Loop / Mean Field)
-# Breaks the instantaneous link between volatility (z) and its precision (γ_cf)
-function constraints_open_loop()
-    return @constraints begin
-        q(z, x, γ_cf) = q(z)q(x)q(γ_cf)
-    end
-end
+"""
+    make_constraints(mode::Symbol)
 
-# 2. Circulatory Fidelity (Closed Loop / Structured)
-# Preserves the off-diagonal curvature (covariance) between z and γ_cf
-function constraints_closed_loop()
-    return @constraints begin
-        q(z, x, γ_cf) = q(z, γ_cf)q(x) 
+Returns the factorization constraints for the variational posterior.
+- `:open_loop`: Standard Mean-Field (HGF). Factors q(z) and q(γ) separately.
+- `:closed_loop`: Structured Variational (CF). Preserves q(z, γ) covariance.
+"""
+function make_constraints(mode::Symbol)
+    if mode == :open_loop
+        # The "Diagonal Deficit": Volatility and its precision are uncoupled.
+        return @constraints begin
+            q(z, x, γ_cf) = q(z)q(x)q(γ_cf)
+        end
+    elseif mode == :closed_loop
+        # "Variational Closure": Volatility and precision are jointly inferred.
+        return @constraints begin
+            q(z, x, γ_cf) = q(z, γ_cf)q(x) 
+        end
+    else
+        error("Unknown mode: $mode. Use :open_loop or :closed_loop")
     end
 end
 
