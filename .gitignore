@@ -1,32 +1,27 @@
-# === Julia-specific ===
-# Do NOT ignore Manifest.toml in research repos! (we want reproducibility)
-
-# Local package server & compiled files
-.julia/
-*.jl.*.cov
+# Julia
+*.jl.cov
 *.jl.mem
-*.jld2
-*.h5
-*.hdf5
-*.arrow
+Manifest.toml
+.julia/
 
-# === Large or auto-generated outputs ===
-/data/*.csv
-/data/*.jld2
-/results/
-/figures/
-/plots/
-/output/
-/logs/
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
 
-# === OS & editor junk ===
+# LaTeX
+*.aux
+*.bbl
+*.blg
+*.log
+*.out
+*.synctex.gz
+
+# OS
 .DS_Store
 Thumbs.db
-*.swp
-*~
-.vscode/settings.json
-*.code-workspace
 
-# === Secrets (never commit these) ===
-.env
-secrets.jl
+# Editor
+*.swp
+.vscode/
+.idea/
