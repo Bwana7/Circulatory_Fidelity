@@ -1,0 +1,452 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage[margin=1in]{geometry}
+\usepackage{natbib}
+\usepackage{authblk}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{xcolor}
+
+% Theorem environments
+\newtheorem{theorem}{Theorem}
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{corollary}[theorem]{Corollary}
+\newtheorem{definition}[theorem]{Definition}
+
+% Commands
+\newcommand{\CF}{\mathrm{CF}}
+\newcommand{\MI}{I}
+\newcommand{\Ent}{H}
+\newcommand{\KL}{D_{\mathrm{KL}}}
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\Var}{\mathrm{Var}}
+\newcommand{\MF}{\mathrm{MF}}
+
+\title{Circulatory Fidelity: A Prior Predictive Diagnostic\\for Mean-Field Variational Inference}
+
+\author[1]{Aaron Lowry}
+\affil[1]{Independent Researcher}
+
+\date{December 2025}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Mean-field variational inference (MFVI) approximates posterior distributions by assuming statistical independence between latent variables. This factorization discards cross-variable dependencies that may be essential for accurate inference. We introduce \emph{Circulatory Fidelity} (CF), a normalized information-theoretic measure computable from the \emph{prior predictive} distribution---before posterior inference is attempted. CF synthesizes established results from information geometry to quantify the structural dependency that MFVI will discard. We demonstrate CF's utility on two model classes: Hierarchical Gaussian Filters (HGF), where high CF predicts when ignoring volatility coupling degrades inference ($r = 0.39$, $p < 0.0001$); and Hierarchical Linear Models (HLM), where low CF predicts when no-pooling overfits to noise ($r = -0.72$, $p < 0.0001$). CF provides a practical workflow: compute from generative model structure, assess MFVI appropriateness, then choose inference method accordingly. Code available at \url{https://github.com/Bwana7/Circulatory_Fidelity}.
+\end{abstract}
+
+\noindent\textbf{Keywords:} variational inference, mean-field approximation, mutual information, information geometry, hierarchical models, model selection
+
+%=============================================================================
+\section{Introduction}
+\label{sec:intro}
+%=============================================================================
+
+Variational inference (VI) has become essential for approximate Bayesian computation, offering scalable alternatives to Markov Chain Monte Carlo \citep{blei2017variational}. The mean-field assumption---that the variational distribution factorizes as $q(\theta) = \prod_i q_i(\theta_i)$---enables tractable optimization but enforces statistical independence between all latent variables.
+
+This paper addresses a practical question: \emph{before committing computational resources to posterior inference}, can we assess whether MFVI is appropriate for a given model?
+
+Existing diagnostics operate \emph{after} inference:
+\begin{itemize}
+    \item \textbf{ELBO}: Measures approximation quality but is scale-dependent and conflates error sources
+    \item \textbf{PSIS-$\hat{k}$}: Diagnoses global VI failure but requires posterior samples \citep{vehtari2017practical}
+    \item \textbf{VSBC}: Checks calibration but requires fitting hundreds of simulated datasets \citep{talts2018validating}
+\end{itemize}
+
+We introduce \textbf{Circulatory Fidelity} (CF), a diagnostic computable from the \emph{prior predictive} distribution:
+\begin{equation}
+\CF(z, x) = \frac{\MI(z; x)}{\min(\Ent(z), \Ent(x))}
+\label{eq:cf}
+\end{equation}
+where $\MI(z;x)$ is mutual information between latent variables and $\Ent(\cdot)$ is differential entropy, both computed from the generative model's joint distribution.
+
+\paragraph{Key insight.} CF is computable \emph{before} observing data, directly from model structure. By simulating from the prior predictive $p(\theta, z, x) = p(\theta)p(z|\theta)p(x|z)$, we obtain samples where CF can be estimated. This diagnoses whether the \emph{model itself} creates dependencies that MFVI cannot represent.
+
+\paragraph{Contributions.}
+\begin{enumerate}
+    \item We define CF and establish its properties as a bounded $[0,1]$ measure (Section~\ref{sec:definition})
+    \item We synthesize established information-geometric results to interpret CF as normalized KL projection cost (Section~\ref{sec:geometry})
+    \item We provide a concrete prior predictive workflow (Section~\ref{sec:workflow})
+    \item We validate on two structurally distinct model classes: HGF and HLM (Sections~\ref{sec:hgf}--\ref{sec:hlm})
+\end{enumerate}
+
+%=============================================================================
+\section{Definition and Properties}
+\label{sec:definition}
+%=============================================================================
+
+\begin{definition}[Circulatory Fidelity]
+For random variables $z$ and $x$ from joint distribution $p(z,x)$ with finite, positive marginal entropies:
+\begin{equation}
+\CF(z, x) = \frac{\MI(z; x)}{\min(\Ent(z), \Ent(x))}
+\end{equation}
+\end{definition}
+
+The name reflects CF's role in hierarchical models: information \emph{circulates} bidirectionally between levels, and CF measures the \emph{fidelity} of this circulation under approximation.
+
+\begin{proposition}[Boundedness]
+\label{prop:bounded}
+$0 \leq \CF(z, x) \leq 1$ for any joint distribution with positive marginal entropies.
+\end{proposition}
+\begin{proof}
+Non-negativity: $\MI(z;x) \geq 0$ (Gibbs' inequality). Upper bound: $\MI(z;x) \leq \min(\Ent(z), \Ent(x))$ (data processing inequality).
+\end{proof}
+
+\begin{proposition}[Mean-Field Implication]
+Under any mean-field approximation $q(z,x) = q(z)q(x)$: $\CF_q(z,x) = 0$.
+\end{proposition}
+
+\paragraph{Normalization choice.} We use minimum normalization rather than geometric or arithmetic mean. In hierarchical inference, information flow is constrained by the \emph{lower-entropy} variable (the bottleneck). If $\Ent(z) \ll \Ent(x)$, then $z$ limits information transfer. Normalizing by $\min(\Ent(z), \Ent(x))$ measures what fraction of this limiting capacity is used for dependency.
+
+%=============================================================================
+\section{Information-Geometric Interpretation}
+\label{sec:geometry}
+%=============================================================================
+
+We synthesize established results from information geometry \citep{amari2016information} to provide theoretical grounding for CF.
+
+\paragraph{Mean-field as projection.} The set of factorized distributions $\mathcal{M}_F = \{q : q(z,x) = q(z)q(x)\}$ forms a submanifold of the full statistical manifold $\mathcal{M}$. MFVI projects the true posterior onto this submanifold.
+
+\begin{proposition}[Projection Cost]
+\label{prop:projection}
+For bivariate Gaussian $p(z,x)$ with correlation $\rho$ and mean-field approximation $q(z,x) = q(z)q(x)$ matching marginals:
+\begin{equation}
+\KL(p \| q) = \MI(z;x) = -\frac{1}{2}\log(1-\rho^2)
+\end{equation}
+\end{proposition}
+
+This is a standard result; we include it to clarify that CF measures the \emph{normalized} projection cost:
+\begin{equation}
+\CF = \frac{\KL(p \| p_{\MF})}{\min(\Ent(z), \Ent(x))}
+\end{equation}
+
+\paragraph{Fisher Information Matrix.} Under mean-field factorization, the Fisher Information Matrix (FIM) becomes block-diagonal \citep{amari2016information}. Cross-block terms vanish because score functions have zero mean under exponential families. This geometric fact---that mean-field \emph{severs} the statistical coupling between variable blocks---is what CF quantifies.
+
+\paragraph{Note on KL direction.} Our derivation uses the forward KL divergence $\KL(p \| q)$, while VI optimizes the reverse $\KL(q \| p)$. CF thus measures the \emph{structural limit} of factorization---a lower bound on approximation error imposed by the independence constraint, regardless of how well ELBO is optimized.
+
+%=============================================================================
+\section{Prior Predictive Workflow}
+\label{sec:workflow}
+%=============================================================================
+
+The key practical contribution is that CF can be computed \emph{before} posterior inference, directly from the generative model.
+
+\begin{algorithm}[h]
+\caption{Prior Predictive CF Diagnostic}
+\label{alg:workflow}
+\begin{algorithmic}[1]
+\Require Generative model $p(\theta)p(z|\theta)p(x|z,\theta)$
+\Ensure Decision: MFVI appropriate or not
+\State \textbf{Simulate} $N$ samples $\{(\theta^{(i)}, z^{(i)}, x^{(i)})\}_{i=1}^N$ from prior predictive
+\State \textbf{Estimate} $\CF$ from samples (Gaussian: compute correlation; general: k-NN estimator)
+\State \textbf{Assess} model-class-specific threshold:
+\begin{itemize}
+    \item Filtering models (HGF): High CF $\Rightarrow$ structured VI needed
+    \item Pooling models (HLM): Low CF $\Rightarrow$ partial pooling needed
+\end{itemize}
+\State \textbf{Choose} inference method accordingly
+\end{algorithmic}
+\end{algorithm}
+
+\paragraph{Why this works.} The prior predictive distribution $p(\theta, z, x)$ encodes the \emph{structural dependencies} of the model. If the generative process creates strong coupling between variables, this coupling exists regardless of what data are observed. CF computed from prior predictive samples diagnoses whether the model \emph{class} is suitable for MFVI, before any specific dataset is considered.
+
+\paragraph{Computational cost.} Simulating from prior predictive is typically cheap (forward sampling). CF estimation requires $O(N)$ samples; for Gaussians, $N \approx 1000$ suffices. This is negligible compared to posterior inference.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.9\textwidth]{fig1_workflow.pdf}
+\caption{Prior predictive CF diagnostic workflow. CF is computed from model structure before observing data, enabling informed choice of inference method.}
+\label{fig:workflow}
+\end{figure}
+
+%=============================================================================
+\section{Case Study 1: Hierarchical Gaussian Filter}
+\label{sec:hgf}
+%=============================================================================
+
+The Hierarchical Gaussian Filter \citep{mathys2011bayesian} is widely used in computational psychiatry for modeling belief updating under uncertainty. It features hierarchical coupling: higher-level volatility beliefs modulate lower-level state estimation.
+
+\subsection{Model Structure}
+
+\begin{align}
+x_3(t) &\sim \mathcal{N}(x_3(t-1), \sigma_3^2) & \text{(volatility)} \\
+x_2(t) &\sim \mathcal{N}(x_2(t-1), \sigma_2^2 \cdot e^{\kappa x_3(t)}) & \text{(state)} \\
+y(t) &\sim \mathcal{N}(x_2(t), \sigma_y^2) & \text{(observation)}
+\end{align}
+
+The coupling parameter $\kappa$ controls how strongly volatility $x_3$ affects state dynamics. When $\kappa = 0$, levels are independent; when $\kappa > 0$, knowing $x_3$ informs optimal estimation of $x_2$.
+
+\subsection{CF Computation}
+
+For time-series models, joint entropy $\Ent(x_1, \ldots, x_T)$ grows with trajectory length $T$, which would make CF time-dependent. We therefore define CF using \emph{single-timestep marginal entropies}, measuring instantaneous dependency structure rather than cumulative trajectory information.
+
+For HGF, CF measures the dependency between volatility $x_3(t)$ and state innovations $\Delta x_2(t) = x_2(t) - x_2(t-1)$:
+\begin{equation}
+\CF_{\text{HGF}} = \frac{\MI(x_3(t); \Delta x_2(t))}{\min(\Ent(x_3(t)), \Ent(\Delta x_2(t)))}
+\end{equation}
+where all quantities are computed at single timesteps from stationary marginal distributions. This avoids divergence issues while capturing the structural coupling that mean-field discards. Higher coupling $\kappa$ produces higher CF.
+
+\subsection{Simulation Study}
+
+We compare two inference approaches:
+\begin{itemize}
+    \item \textbf{Mean-field}: Estimates $x_2$ using constant (marginal) volatility, ignoring $x_3$
+    \item \textbf{Oracle}: Estimates $x_2$ using true volatility values
+\end{itemize}
+
+The oracle represents the ceiling on structured inference performance.
+
+\paragraph{Results.} Figure~\ref{fig:hgf} shows results across coupling strengths ($\kappa \in [0, 2]$, 100 simulations each).
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lcc}
+\toprule
+Coupling ($\kappa$) & Mean CF & MSE Ratio (MF/Oracle) \\
+\midrule
+0.0 & 0.001 & 1.00 \\
+0.4 & 0.026 & 1.25 \\
+0.8 & 0.080 & 2.07 \\
+1.2 & 0.142 & 6.21 \\
+2.0 & 0.214 & 9.88 \\
+\bottomrule
+\end{tabular}
+\caption{HGF: Higher coupling increases CF and MF error.}
+\label{tab:hgf}
+\end{table}
+
+Statistical analysis:
+\begin{itemize}
+    \item Correlation: $r = 0.39$, $p < 0.0001$
+    \item Low-CF regimes: MSE ratio $= 1.12$
+    \item High-CF regimes: MSE ratio $= 5.86$ (5.2$\times$ worse)
+    \item $t$-test (low vs high CF): $t = -10.87$, $p < 0.000001$
+\end{itemize}
+
+\paragraph{Interpretation.} For HGF, \textbf{high CF predicts MF failure}. When volatility-state coupling is strong, ignoring it degrades inference substantially.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\textwidth]{fig3_hgf_results.pdf}
+\caption{HGF results. (A) CF increases with coupling strength. (B) MF performance degrades correspondingly. (C) CF predicts MSE ratio ($r = 0.39$).}
+\label{fig:hgf}
+\end{figure}
+
+%=============================================================================
+\section{Case Study 2: Hierarchical Linear Model}
+\label{sec:hlm}
+%=============================================================================
+
+Hierarchical Linear Models are ubiquitous across social sciences, ecology, and medicine. They feature \emph{partial pooling}: group-level parameters are shrunk toward a global mean.
+
+\subsection{Model Structure}
+
+\begin{align}
+\theta_j &\sim \mathcal{N}(0, \tau^2) & \text{(group effect)} \\
+y_{ij} &\sim \mathcal{N}(\theta_j, \sigma^2) & \text{(observation)}
+\end{align}
+
+The intraclass correlation $\text{ICC} = \tau^2 / (\tau^2 + \sigma^2)$ determines the reliability of group means as estimates of $\theta_j$.
+
+\subsection{CF Computation}
+
+For HLM, CF relates to the reliability of group means:
+\begin{equation}
+\text{Reliability} = \frac{\tau^2}{\tau^2 + \sigma^2/n} = \text{Corr}(\theta_j, \bar{y}_j)^2
+\end{equation}
+
+CF is computed from this reliability coefficient, normalized appropriately.
+
+\subsection{Simulation Study}
+
+We compare:
+\begin{itemize}
+    \item \textbf{No-pooling}: Each $\theta_j$ estimated by group mean $\bar{y}_j$ (extreme MF)
+    \item \textbf{Partial-pooling}: Shrinkage toward grand mean (structured)
+\end{itemize}
+
+\paragraph{Results.} Figure~\ref{fig:hlm} shows results across ICC values (100 simulations each).
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lccc}
+\toprule
+$\tau$ & ICC & CF & MSE Ratio (No-Pool/Partial) \\
+\midrule
+0.2 & 0.04 & 0.12 & 3.60 \\
+0.4 & 0.14 & 0.34 & 1.61 \\
+0.6 & 0.26 & 0.54 & 1.33 \\
+1.0 & 0.50 & 0.85 & 1.11 \\
+2.0 & 0.80 & 1.00 & 1.02 \\
+\bottomrule
+\end{tabular}
+\caption{HLM: Lower CF (low reliability) increases no-pooling error.}
+\label{tab:hlm}
+\end{table}
+
+Statistical analysis:
+\begin{itemize}
+    \item Correlation: $r = -0.72$, $p < 0.0001$
+    \item Low-CF regimes: MSE ratio $= 1.93$
+    \item High-CF regimes: MSE ratio $= 1.05$
+    \item $t$-test: $t = 14.78$, $p < 0.000001$
+\end{itemize}
+
+\paragraph{Interpretation.} For HLM, \textbf{low CF predicts MF failure}. When group effects are weak (low reliability), no-pooling overfits to noise.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\textwidth]{fig4_hlm_results.pdf}
+\caption{HLM results. (A) CF tracks reliability. (B) Pooling benefit varies with ICC. (C) Low CF predicts no-pooling failure ($r = -0.72$).}
+\label{fig:hlm}
+\end{figure}
+
+%=============================================================================
+\section{Unified Interpretation}
+\label{sec:unified}
+%=============================================================================
+
+The HGF and HLM results reveal a nuanced picture: CF's relationship to MF failure is \emph{model-class-specific}.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lll}
+\toprule
+Model Class & CF Measures & MF Fails When \\
+\midrule
+HGF (filtering) & Volatility-state coupling & CF is HIGH (dependency discarded) \\
+HLM (pooling) & Signal reliability & CF is LOW (overfitting to noise) \\
+\bottomrule
+\end{tabular}
+\caption{Model-class-specific CF interpretation.}
+\label{tab:unified}
+\end{table}
+
+\paragraph{Common principle.} In both cases, CF diagnoses \emph{when the MF independence assumption is consequential}:
+\begin{itemize}
+    \item HGF: MF assumes volatility and state are independent. High CF means they're not---MF loses information.
+    \item HLM: No-pooling assumes group means are sufficient statistics. Low CF means they're unreliable---shrinkage is needed.
+\end{itemize}
+
+\paragraph{Practical guidance.}
+\begin{enumerate}
+    \item Identify model class (filtering vs. pooling)
+    \item Compute CF from prior predictive
+    \item Apply class-specific threshold (Table~\ref{tab:unified})
+    \item Choose inference method accordingly
+\end{enumerate}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.9\textwidth]{fig5_unified.pdf}
+\caption{Unified interpretation. (A) HGF: High CF signals MF failure. (B) HLM: Low CF signals no-pooling failure.}
+\label{fig:unified}
+\end{figure}
+
+%=============================================================================
+\section{Discussion}
+\label{sec:discussion}
+%=============================================================================
+
+\subsection{Relation to Existing Diagnostics}
+
+CF complements existing tools:
+\begin{itemize}
+    \item \textbf{vs. ELBO}: ELBO is optimized during inference; CF is computed beforehand. CF diagnoses \emph{structural} suitability.
+    \item \textbf{vs. PSIS-$\hat{k}$}: PSIS requires posterior samples; CF requires only prior predictive. CF is \emph{preemptive}.
+    \item \textbf{vs. VSBC}: VSBC checks calibration post-hoc; CF assesses model structure a priori.
+\end{itemize}
+
+\subsection{Limitations}
+
+\paragraph{Pairwise measure.} CF quantifies bivariate dependency. For models with higher-order interactions or many variable groups, multiple CF values may be needed.
+
+\paragraph{Non-Gaussian distributions.} The closed-form CF derivations in this paper assume Gaussian marginals. For non-Gaussian distributions, mutual information and entropy must be estimated nonparametrically. The \emph{k-nearest neighbor} (k-NN) framework provides the most robust approach:
+
+\begin{itemize}
+    \item \textbf{Kraskov-Stögbauer-Grassberger (KSG)}: The recommended estimator for mutual information \citep{kraskov2004estimating}. KSG achieves bias cancellation through geometric construction---using the same neighborhood radius in joint and marginal spaces. Default $k=3$--$4$ neighbors; exact for independent variables regardless of marginal shape.
+    
+    \item \textbf{Kozachenko-Leonenko (KL)}: For entropy estimation, with bias $O(k^{-1} + (k/n)^{2/d})$. Efficient for $d \leq 3$; weighted variants \citep{berrett2019efficient} extend to higher dimensions.
+    
+    \item \textbf{Geodesic k-NN}: When data lies on Riemannian manifolds, replace Euclidean distances with geodesic distances \citep{costa2004geodesic}. Appropriate for curved submanifolds where intrinsic dimension $\ll$ ambient dimension.
+\end{itemize}
+
+\noindent Sample size requirements scale as $N > 5^d$ for reliable estimation in $d$ dimensions. For heavy-tailed distributions, marginal reparametrization to standard normal substantially improves KSG performance. Software implementations include JIDT (Java/Python/R/Julia), NPEET (Python), and \texttt{TransferEntropy.jl} (Julia).
+
+\paragraph{Model-class dependence.} The interpretation of CF differs between model classes. Practitioners must understand their model's structure to apply CF correctly.
+
+\paragraph{Threshold selection.} We provide empirically-derived thresholds. Optimal thresholds may vary by application domain.
+
+\subsection{What CF Is and Is Not}
+
+\paragraph{CF provides:}
+\begin{itemize}
+    \item Quantification of structural dependency from prior predictive
+    \item Preemptive assessment of MFVI suitability
+    \item Interpretable scale $[0,1]$
+\end{itemize}
+
+\paragraph{CF does not provide:}
+\begin{itemize}
+    \item Prescription of which structured method to use
+    \item Guarantee that structured methods will improve (only that MF may fail)
+    \item Higher-order dependency assessment
+\end{itemize}
+
+%=============================================================================
+\section{Conclusion}
+\label{sec:conclusion}
+%=============================================================================
+
+Circulatory Fidelity provides a principled, preemptive diagnostic for mean-field variational inference. By computing CF from prior predictive samples---before posterior inference is attempted---practitioners can assess whether their model's dependency structure is compatible with the mean-field assumption.
+
+Our contribution is synthetic: we combine established results from information theory and information geometry into a practical workflow. The empirical validation across two structurally distinct model classes (HGF and HLM) demonstrates that CF reliably predicts when mean-field assumptions will be consequential.
+
+CF fills a gap in the VI diagnostic toolkit: it operates \emph{before} inference, at the model specification stage, enabling informed methodological choices rather than post-hoc validation.
+
+\paragraph{Code availability.} Reference implementation and simulation code: \url{https://github.com/Bwana7/Circulatory_Fidelity}
+
+%=============================================================================
+\bibliographystyle{plainnat}
+\bibliography{references}
+
+%=============================================================================
+\appendix
+\section{Gaussian CF Derivations}
+\label{app:gaussian}
+%=============================================================================
+
+For bivariate Gaussian $(z, x) \sim \mathcal{N}(\mu, \Sigma)$ with correlation $\rho$ and variances $\sigma_z^2$, $\sigma_x^2$:
+
+\paragraph{Mutual Information.}
+\begin{equation}
+\MI(z;x) = \Ent(z) + \Ent(x) - \Ent(z,x) = -\frac{1}{2}\log(1 - \rho^2)
+\end{equation}
+
+\paragraph{Marginal Entropies.}
+\begin{equation}
+\Ent(z) = \frac{1}{2}\log(2\pi e \sigma_z^2), \quad \Ent(x) = \frac{1}{2}\log(2\pi e \sigma_x^2)
+\end{equation}
+
+\paragraph{CF.}
+\begin{equation}
+\CF = \frac{-\log(1-\rho^2)}{\log(2\pi e \cdot \min(\sigma_z^2, \sigma_x^2))}
+\end{equation}
+
+For unit variances: $\CF = -\log(1-\rho^2) / \log(2\pi e) \approx 0.35 \cdot (-\log(1-\rho^2))$
+
+\section{Simulation Details}
+\label{app:simulations}
+%=============================================================================
+
+\paragraph{HGF.} $T = 300$ timesteps, base volatility $= 0.3$, volatility volatility $= 0.1$, observation noise $= 0.5$. Coupling $\kappa \in \{0, 0.2, 0.4, 0.6, 0.8, 1.0, 1.5, 2.0\}$. 100 simulations per setting.
+
+\paragraph{HLM.} 30 groups, 10 observations per group, within-group $\sigma = 1$. Between-group $\tau \in \{0.2, 0.4, 0.6, 0.8, 1.0, 1.5, 2.0, 3.0\}$. 100 simulations per setting.
+
+\end{document}

@@ -1,0 +1,27 @@
+# Julia
+*.jl.cov
+*.jl.mem
+Manifest.toml
+.julia/
+
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# LaTeX
+*.aux
+*.bbl
+*.blg
+*.log
+*.out
+*.synctex.gz
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+*.swp
+.vscode/
+.idea/
