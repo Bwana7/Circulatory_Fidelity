@@ -6,7 +6,7 @@
 
 ## Overview
 
-Circulatory Fidelity (CF) is a normalized information-theoretic measure that quantifies structural coupling between variables in hierarchical models. It diagnoses whether mean-field variational inference (MFVI) will succeed or fail *before* running inference, directly from the prior predictive distribution.
+Circulatory Fidelity (CF) is a normalized information-theoretic measure that quantifies structural coupling between variables in hierarchical models. It diagnoses whether mean-field variational inference (MFVI) will succeed or fail *before* running inference.
 
 **Key formula:**
 ```
@@ -15,35 +15,23 @@ CF(z, x) = I(z; x) / min(H(z), H(x))
 
 where I(z;x) is mutual information and H(·) is differential entropy.
 
-**Primary diagnostic:** We adopt the Linfoot correlation r_L = √(1 - exp(-2I)) which equals |ρ| for Gaussians and provides a universal [0,1] scale.
-
-## Theoretical Contributions
-
-1. **Computational Synergy Principle**: Synergistic dependencies arise if and only if the generative function is affine over GF(2), connecting to Siegenthaler's correlation immunity in cryptography.
-
-2. **Asymmetry Paradox**: High CF predicts MFVI *failure* in filtering models (constitutive coupling) but hierarchy *redundancy* in pooling models (inductive coupling).
-
-3. **Proximal Dominance Principle**: In deep hierarchies, proximal coupling causes up to 40× degradation while distal coupling causes none.
-
-4. **Maximal Coupling Rule**: For non-stationary time series, MFVI suitability is determined by maximum windowed CF, not global average.
+We also use the **Linfoot correlation** r_L = √(1 - exp(-2I)) as a universal [0,1] scale that equals |ρ| for Gaussians.
 
 ## Key Results
 
-| Model | Finding | Correlation | N |
-|-------|---------|-------------|---|
-| SVF (Stochastic Volatility Filter) | High CF → degraded inference | r = 0.85 (aggregated) | 8,000 |
-| HLM (Hierarchical Linear Model) | Low CF → no-pooling overfitting | r = -0.78 | 8,000 |
-| Three-Layer Hierarchy | Proximal Dominance Principle | 40× vs 1× MSE ratio | 16,000 |
-| Elementary Cellular Automata | 16/256 rules are affine (pure synergy) | 6.25% | 256 |
+| Model | Finding | Correlation |
+|-------|---------|-------------|
+| SVF | High CF → degraded inference | r = 0.84 (95% CI: [0.67, 0.92]) |
+| SVF | CF predicts log-likelihood gap | r = 0.86 |
+| HLM | Low CF → no-pooling overfitting | r = -0.78 |
+| Deep Hierarchy | Proximal Dominance Principle | MSE ratio 1.0× (distal) vs 40× (proximal) |
 
 ## Installation
 
 ### Python
 ```bash
 pip install numpy scipy
-# Clone repository and import from python/
-from python.circulatory_fidelity import circulatory_fidelity_gaussian, circulatory_fidelity_ksg
-from python.synergy_extension import synergy_screen
+# Then import from the python/ directory
 ```
 
 ### Julia
@@ -58,21 +46,20 @@ using .CirculatoryFidelity
 
 ### Python
 ```python
-from python.circulatory_fidelity import circulatory_fidelity_gaussian, circulatory_fidelity_ksg, linfoot_correlation
+from circulatory_fidelity import (
+    circulatory_fidelity_gaussian, 
+    circulatory_fidelity_copula,
+    linfoot_correlation
+)
 
 # Gaussian case (closed-form) - REQUIRES sigma parameters
 cf = circulatory_fidelity_gaussian(rho=0.7, sigma_z=1.0, sigma_x=1.0)  # → 0.43
 
-# Convert to Linfoot correlation
-r_L = linfoot_correlation(rho=0.7)  # → 0.7 (equals |ρ| for Gaussians)
+# Non-Gaussian continuous (copula transform - RECOMMENDED)
+cf = circulatory_fidelity_copula(X, Y)  # Conservative lower bound
 
-# Non-Gaussian case (KSG estimator)
-cf = circulatory_fidelity_ksg(X, Y, k=5)
-
-# Synergy screening
-from python.synergy_extension import synergy_screen
-result = synergy_screen(z1, z2, x)
-print(f"Risk level: {result['risk_level']}")
+# Linfoot correlation
+r_L = linfoot_correlation(rho=0.7)  # → 0.7 for Gaussians
 ```
 
 ### Julia
@@ -82,111 +69,85 @@ using .CirculatoryFidelity
 # Gaussian case - REQUIRES sigma parameters
 cf = circulatory_fidelity_gaussian(0.7, 1.0, 1.0)  # → 0.43
 
-# Non-Gaussian case
+# Non-Gaussian continuous (copula transform - RECOMMENDED)
+cf = circulatory_fidelity_copula(X, Y)  # Conservative lower bound
+
+# Linfoot correlation
+r_L = linfoot_correlation(0.7)  # → 0.7
+
+# Discrete/mixed variables only (use with caution - significant bias)
 cf = circulatory_fidelity_ksg(X, Y; k=5)
 ```
 
 **Important**: CF requires `min(H(z), H(x)) > 0`. For Gaussians, this means σ > 0.2420.
 
-## Interpretive Scale (Linfoot Correlation)
-
-| Coupling Regime | r_L | Interpretation |
-|-----------------|-----|----------------|
-| Negligible | < 0.25 | MFVI safe |
-| Weak | 0.25–0.35 | MFVI likely acceptable |
-| Moderate | 0.35–0.55 | Caution warranted |
-| Strong | > 0.55 | Structured inference recommended |
+**Estimation Methods**:
+- **Gaussian**: Use closed-form `circulatory_fidelity_gaussian()` (exact)
+- **Non-Gaussian continuous**: Use `circulatory_fidelity_copula()` (conservative lower bound with closed-form SE)
+- **Discrete/mixed**: Use `circulatory_fidelity_ksg()` with awareness of 30-45% negative bias
 
 ## Repository Structure
 
 ```
+Circulatory_Fidelity/
 ├── paper/
-│   └── Circulatory_Fidelity_TMLR.tex      # Main manuscript (TMLR format)
+│   ├── Circulatory_Fidelity_Manuscript.pdf   # Main paper (includes appendices)
+│   ├── Circulatory_Fidelity_Manuscript.tex   # LaTeX source
+│   └── tmlr.sty                              # TMLR style file
 ├── python/
-│   ├── __init__.py                         # Package initialization
-│   ├── circulatory_fidelity.py            # Core CF implementation
-│   └── synergy_extension.py               # Synergy detection tools
+│   ├── circulatory_fidelity.py               # Main CF module
+│   ├── copula_cf_validation.py               # Copula validation experiments
+│   ├── svf_psis_validation.py                # Log-likelihood gap validation (N=900)
+│   ├── hierarchical_vae_dsprites.py          # dSprites experiment
+│   └── deprecated/                           # Development versions (archived)
 ├── julia/
-│   ├── Project.toml                        # Julia package manifest
-│   ├── src/CirculatoryFidelity.jl         # Julia implementation
-│   └── test/runtests.jl                   # Test suite
+│   ├── Project.toml                          # Julia dependencies
+│   ├── Manifest.toml                         # Julia lockfile
+│   └── src/
+│       └── CirculatoryFidelity.jl            # Julia implementation
+│   └── test/
+│       └── runtests.jl                       # Unit tests
 ├── notebooks/
-│   ├── 01_SVF_Case_Study.ipynb            # Stochastic volatility analysis
-│   ├── 02_HLM_Case_Study.ipynb            # Hierarchical linear model
-│   ├── 03_Deep_Hierarchy_Case_Study.ipynb # Three-layer hierarchy
-│   ├── 04_KSG_NonGaussian_Demo.ipynb      # KSG estimator validation
-│   └── 05_Synergy_Higher_Order.ipynb      # Synergy & Walsh-Hadamard
+│   ├── 01_SVF_Case_Study.ipynb               # Stochastic Volatility Filter
+│   ├── 02_HLM_Case_Study.ipynb               # Hierarchical Linear Model
+│   ├── 03_Deep_Hierarchy_Case_Study.ipynb    # Three-layer analysis
+│   ├── 04_Copula_NonGaussian_Demo.ipynb      # Copula-based estimation
+│   ├── 05_Synergy_Higher_Order.ipynb         # Synergy detection & XOR analysis
+│   └── 06_CF_LogLik_Validation.ipynb         # Log-likelihood gap validation
 ├── simulations/
-│   ├── svf_validation.csv                 # 8,000 SVF simulations
-│   ├── hlm_validation.csv                 # 8,000 HLM simulations
-│   ├── three_layer_validation.csv         # 16,000 three-layer simulations
-│   ├── ksg_validation.csv                 # KSG estimator validation
-│   ├── threshold_calibration.csv          # Threshold derivation data
-│   └── trigger_experiment.csv             # PCA failure demonstration
+│   ├── svf_validation.csv                    # SVF simulations (N=8,000)
+│   ├── hlm_validation.csv                    # HLM simulations (N=8,000)
+│   ├── three_layer_validation.csv            # Three-layer (N=16,000)
+│   ├── cf_psis_comprehensive_validation.csv  # Log-likelihood validation (N=900)
+│   ├── dsprites_proximal_dominance.csv       # dSprites validation
+│   ├── copula_validation.csv                 # Copula estimator validation
+│   ├── threshold_calibration.csv             # Threshold calibration
+│   ├── trigger_experiment.csv                # PCA failure mode validation
+│   └── archive/                              # Intermediate files (archived)
 ├── figures/
-│   ├── fig1_bottleneck.pdf                # Information bottleneck
-│   ├── fig2_workflow.pdf                  # Diagnostic workflow
-│   ├── fig3_svf_results.pdf               # SVF validation results
-│   ├── fig4_hlm_results.pdf               # HLM validation results
-│   ├── fig5_geometry.pdf                  # Statistical manifold
-│   ├── fig6_unified.pdf                   # Unified interpretation
-│   ├── fig7_threelayer.pdf                # Three-layer results
-│   ├── figS1_eurusd_analysis.pdf          # EUR/USD windowed CF
-│   ├── figS2_hsb_analysis.pdf             # HSB data analysis
-│   └── figS3_psis_comparison.pdf          # PSIS comparison
-├── README.md
-└── LICENSE
-```
-
-## Validation Summary
-
-All simulations verify paper claims:
-
-### Core Validations
-- **SVF**: N=8,000 simulations
-  - Pooled correlation: r = 0.27
-  - Aggregated correlation: r = 0.85
-  - Threshold CF > 0.10 separates degraded inference
-  
-- **HLM**: N=8,000 simulations  
-  - Correlation: r = -0.78
-  - CF = reliability (exact mathematical identity)
-  
-- **Three-Layer**: N=16,000 simulations
-  - Proximal-only (κ₂₁=1.5): MSE ratio = 40×
-  - Distal-only (κ₃₂=1.5): MSE ratio = 1.0×
-  - Combined: MSE ratio = 47×
-
-### Synergy Validation
-- **ECA Survey**: 16/256 rules are affine over GF(2) (exactly 6.25%)
-- **XOR Blind Spot**: CF(Z₁,X)≈0, CF(Z₂,X)≈0, but CF(Z₁·Z₂,X)>0.39
-- **Walsh-Hadamard**: XOR has zero first-order coefficients (pure synergy)
-
-### Thresholds (with 95% CI from bootstrap)
-- **SVF**: CF > 0.10 indicates structured inference needed [CI: 0.09-0.11]
-- **HLM**: CF < 0.4 indicates partial pooling needed
-
-## Model Specifications
-
-### Two-Level SVF (Variance Coupling)
-```
-x₃(t) ~ N(x₃(t-1), σ₃²)         # log-volatility
-x₂(t) ~ N(x₂(t-1), exp(κ·x₃(t)))  # state (κ controls coupling)
-y(t)  ~ N(x₂(t), σ_obs²)          # observation
-```
-
-### Three-Level SVF (Proximal Dominance)
-```
-Level 3 → Level 2: coupling κ₃₂
-Level 2 → Level 1: coupling κ₂₁ (proximal)
-Level 1 → y: observation
-```
-
-### HLM
-```
-y_ij ~ N(β_j, σ²)      # observation i in group j
-β_j  ~ N(μ, τ²)        # group effect
-CF   = reliability     # by construction
+│   ├── fig1_bottleneck.pdf                   # Information bottleneck
+│   ├── fig2_workflow.pdf                     # Diagnostic workflow
+│   ├── fig3_svf_results.pdf                  # SVF validation results
+│   ├── fig4_hlm_results.pdf                  # HLM validation results
+│   ├── fig6_unified.pdf                      # Unified interpretation
+│   ├── fig7_threelayer.pdf                   # Three-layer results
+│   ├── fig_copula_validation.pdf             # Copula validation
+│   ├── fig_psis_validation.pdf               # Log-likelihood gap validation
+│   ├── fig_dsprites_proximal.pdf             # dSprites results
+│   ├── fig_eca_comparison.pdf                # Rule 30 vs 150 comparison
+│   ├── fig_walsh.pdf                         # Walsh-Hadamard decomposition
+│   ├── fig_windowed.pdf                      # Windowed CF analysis
+│   ├── fig_proximal.pdf                      # Proximal dominance 3D
+│   ├── fig_asymmetry.pdf                     # Filtering vs pooling
+│   ├── fig_linfoot.pdf                       # Linfoot correlation
+│   ├── fig_manifold.pdf                      # Information geometry
+│   ├── fig_eca_grid.pdf                      # ECA survey grid
+│   ├── figS1_eurusd_analysis.pdf             # EUR/USD case study
+│   ├── figS2_hsb_analysis.pdf                # HSB case study
+│   ├── figS3_psis_comparison.pdf             # PSIS comparison
+│   └── generate_figures.py                   # Figure generation script
+├── requirements.txt                          # Python dependencies
+└── LICENSE                                   # MIT License
 ```
 
 ## Citation
@@ -195,8 +156,7 @@ CF   = reliability     # by construction
 @article{circulatory_fidelity_2025,
   title={Circulatory Fidelity: Quantifying Structural Coupling to Diagnose 
          Mean-Field Failure in Hierarchical Models},
-  author={Anonymous},
-  journal={Transactions on Machine Learning Research},
+  author={Aaron Lowry},
   year={2025}
 }
 ```
@@ -205,13 +165,32 @@ CF   = reliability     # by construction
 
 MIT License - see LICENSE file for details.
 
-## Requirements
+## Validation Summary
 
-### Python
-- numpy >= 1.20
-- scipy >= 1.7
+All simulations verify paper claims:
+- **SVF**: 8,000 simulations, r = 0.84 (aggregated, 95% CI: [0.67, 0.92])
+- **Log-Likelihood Gap Validation**: 900 simulations, CF predicts log-likelihood gap (r = 0.86)
+  - Note: PSIS-k̂ is inappropriate for Gaussian posteriors (see Section 7.5)
+- **HLM**: 8,000 simulations, r = -0.78
+- **Three-Layer**: 16,000 simulations establishing Proximal Dominance Principle
+  - Proximal-only (κ₂₁=1.5): MSE ratio = 40×
+  - Distal-only (κ₃₂=1.5): MSE ratio = 1.0× (exactly, mathematically guaranteed)
+  - Combined: MSE ratio = 47×
+  - Distal amplification range: 1.01–2.26×
+- **dSprites**: 8,000 images validating Proximal Dominance on real data
+- **Copula Estimation**: Validated against closed-form Gaussian solutions (exact)
 
-### Julia
-- Julia >= 1.6
-- NearestNeighbors.jl
-- SpecialFunctions.jl
+### Classification Performance (CF > 0.10 → ΔLL > 58)
+- Sensitivity: 79%
+- Specificity: 94%
+- PPV: 93%
+- NPV: 82%
+
+### Thresholds (with 95% CI from bootstrap)
+- **SVF**: CF > 0.10 indicates structured inference needed [CI: 0.09-0.11]
+- **HLM**: CF < 0.4 indicates partial pooling needed
+
+### Model Specifications
+- **Two-level SVF**: Variance-coupling (κ modulates innovation scale)
+- **Three-level SVF**: Variance-coupling extension for Proximal Dominance analysis
+- **HLM**: CF = reliability by construction
