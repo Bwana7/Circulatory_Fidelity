@@ -153,11 +153,11 @@ Circulatory_Fidelity/
 ## Citation
 
 ```bibtex
-@article{circulatory_fidelity_2025,
+@article{circulatory_fidelity_2026,
   title={Circulatory Fidelity: Quantifying Structural Coupling to Diagnose 
          Mean-Field Failure in Hierarchical Models},
   author={Aaron Lowry},
-  year={2025}
+  year={2026}
 }
 ```
 
