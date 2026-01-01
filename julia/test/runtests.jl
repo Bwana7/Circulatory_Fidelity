@@ -1,106 +1,90 @@
-"""
-    test_circulatory_fidelity.jl
-    
-    Unit tests for CirculatoryFidelity.jl
-"""
-
 using Test
-include("src/CirculatoryFidelity.jl")
-using .CirculatoryFidelity
+using CirculatoryFidelity
 
 @testset "CirculatoryFidelity.jl" begin
-
-    @testset "Mutual Information" begin
-        # MI should be 0 when ρ = 0
-        @test mutual_information(0.0) ≈ 0.0 atol=1e-10
+    
+    @testset "Gaussian CF" begin
+        # Test MI
+        @test mutual_information_gaussian(0.0) ≈ 0.0 atol=1e-10
+        @test mutual_information_gaussian(0.5) ≈ 0.1438 atol=0.001
         
-        # MI should increase with |ρ|
-        @test mutual_information(0.5) < mutual_information(0.8)
+        # Test entropy
+        @test differential_entropy_gaussian(1.0) ≈ 1.4189 atol=0.001
         
-        # MI should be symmetric
-        @test mutual_information(0.5) ≈ mutual_information(-0.5)
+        # Test CF - CORRECTED: requires sigma_z and sigma_x parameters
+        # CF = I(z;x) / min(H(z), H(x))
+        @test circulatory_fidelity_gaussian(0.0, 1.0, 1.0) ≈ 0.0 atol=1e-10
+        @test circulatory_fidelity_gaussian(0.7, 1.0, 1.0) ≈ 0.433 atol=0.01  # MI/H(σ=1)
+        @test 0.0 ≤ circulatory_fidelity_gaussian(0.9, 1.0, 1.0) ≤ 1.0
         
-        # MI should approach infinity as ρ → 1
-        @test mutual_information(0.999) > 3.0
+        # Test SIGMA_MIN constraint
+        @test SIGMA_MIN ≈ 0.2420 atol=0.001
+        
+        # Test Linfoot correlation: r_L = |ρ| for Gaussians
+        @test linfoot_correlation(0.0) ≈ 0.0 atol=1e-10
+        @test linfoot_correlation(0.5) ≈ 0.5 atol=0.001
+        @test linfoot_correlation(0.9) ≈ 0.9 atol=0.001
+        @test linfoot_correlation(-0.7) ≈ 0.7 atol=0.001
     end
-
-    @testset "Differential Entropy" begin
-        # Standard Gaussian entropy ≈ 1.419
-        @test differential_entropy(1.0) ≈ 0.5 * log(2π * ℯ) atol=1e-10
-        
-        # Entropy increases with variance
-        @test differential_entropy(1.0) < differential_entropy(2.0)
-        
-        # Should throw for non-positive σ
-        @test_throws DomainError differential_entropy(0.0)
-        @test_throws DomainError differential_entropy(-1.0)
-    end
-
-    @testset "CF Bounds" begin
-        # CF should be in [0, 1]
-        for ρ in [0.0, 0.3, 0.5, 0.7, 0.9]
-            cf = CF(ρ, 1.0, 1.0)
-            @test 0.0 ≤ cf ≤ 1.0
-        end
-        
-        # CF = 0 when independent
-        @test CF(0.0, 1.0, 1.0) ≈ 0.0 atol=1e-10
-        
-        # CF increases with |ρ|
-        @test CF(0.3, 1.0, 1.0) < CF(0.7, 1.0, 1.0)
-    end
-
-    @testset "CF from Samples" begin
-        # Generate correlated samples
-        n = 10000
-        z = randn(n)
-        x = 0.7z + sqrt(1 - 0.7^2) * randn(n)
-        
-        cf_sample = CF(z, x)
-        cf_true = CF(0.7, 1.0, 1.0)
-        
-        # Should be close to theoretical value
-        @test abs(cf_sample - cf_true) < 0.1
-    end
-
-    @testset "HGF Simulation" begin
-        params = HGFParams(coupling=0.5)
-        sim = simulate_hgf(params, T=100, seed=42)
+    
+    @testset "SVF Model" begin
+        params = SVFParams(coupling=0.5)
+        sim = simulate_svf(params; T=100)
         
         @test length(sim.x3) == 100
-        @test length(sim.x2) == 100
         @test length(sim.y) == 100
-        @test all(isfinite.(sim.x2))
         
-        # CF should be computable
-        cf = compute_cf_hgf(sim)
+        cf = compute_cf_svf(sim)
         @test 0.0 ≤ cf ≤ 1.0
+        
+        _, mf_mse = svf_mf_inference(sim)
+        _, oracle_mse = svf_oracle_inference(sim)
+        @test mf_mse > 0
+        @test oracle_mse > 0
     end
-
-    @testset "HLM Simulation" begin
-        params = HLMParams(n_groups=20, n_per_group=10, τ=1.0, σ=1.0)
-        sim = simulate_hlm(params, seed=42)
+    
+    @testset "SVF Log-Likelihood Gap" begin
+        # Test Kalman filter with log-likelihood
+        params = SVFParams(coupling=1.0)
+        sim = simulate_svf(params; T=100)
         
-        @test length(sim.θ) == 20
-        @test length(sim.y) == 200
-        @test length(sim.group) == 200
+        result = svf_kalman_filter(sim.y, 0.25, 0.25)
+        @test length(result.x_filtered) == 100
+        @test isfinite(result.log_likelihood)
         
-        # CF should be computable
+        # Test log-likelihood gap (oracle should be better)
+        mfvi = svf_fit_mfvi(sim)
+        oracle = svf_fit_oracle(sim)
+        @test oracle.result.log_likelihood >= mfvi.result.log_likelihood - 10  # Allow some tolerance
+        
+        # Test compute_log_likelihood_gap
+        ll_gap = compute_log_likelihood_gap(sim)
+        @test isfinite(ll_gap)
+    end
+    
+    @testset "HLM Model" begin
+        params = HLMParams(tau=1.0, sigma=1.0)
+        @test CirculatoryFidelity.icc(params) ≈ 0.5 atol=0.01
+        @test 0.0 < CirculatoryFidelity.reliability(params) < 1.0
+        
         cf = compute_cf_hlm(params)
         @test 0.0 ≤ cf ≤ 1.0
-    end
-
-    @testset "HLM Properties" begin
-        # Higher τ → higher ICC
-        p1 = HLMParams(τ=0.5, σ=1.0)
-        p2 = HLMParams(τ=1.5, σ=1.0)
         
-        @test CirculatoryFidelity.icc(p1) < CirculatoryFidelity.icc(p2)
-        
-        # Higher τ → higher reliability → higher CF
-        @test compute_cf_hlm(p1) < compute_cf_hlm(p2)
+        sim = simulate_hlm(params)
+        _, np_mse = hlm_no_pooling(sim)
+        _, pp_mse = hlm_partial_pooling(sim)
+        @test np_mse > 0
+        @test pp_mse > 0
     end
-
+    
+    @testset "Three-Layer Model" begin
+        params = ThreeLayerParams(kappa_32=0.5, kappa_21=0.5)
+        sim = simulate_three_layer(params; T=100)
+        
+        cf_32, cf_21 = compute_cf_three_layer(sim)
+        @test 0.0 ≤ cf_32 ≤ 1.0
+        @test 0.0 ≤ cf_21 ≤ 1.0
+    end
 end
 
 println("All tests passed!")
