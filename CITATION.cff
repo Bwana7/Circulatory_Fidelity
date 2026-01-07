@@ -1,0 +1,26 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+authors:
+  - family-names: Lowry
+    given-names: Aaron
+title: "Circulatory Fidelity: A Relational Theory of Information Flow in Hierarchical Models"
+version: 1.1.0
+doi: 10.5281/zenodo.18121821
+date-released: 2026-01-04
+url: "https://github.com/Bwana7/Circulatory_Fidelity"
+repository-code: "https://github.com/Bwana7/Circulatory_Fidelity"
+license: MIT
+keywords:
+  - variational-inference
+  - mean-field
+  - bayesian-inference
+  - diagnostics
+  - hierarchical-models
+  - information-theory
+abstract: >-
+  Circulatory Fidelity (CF) is a diagnostic framework for predicting when 
+  mean-field variational inference (MFVI) will fail in hierarchical Bayesian 
+  models. The primary diagnostic metric is Inference Coupling (IC), which 
+  quantifies structural dependencies between latent variables and observables.
+  High IC indicates tight coupling that MFVI's factorized approximation cannot 
+  capture, predicting inference failures before running expensive computations.
