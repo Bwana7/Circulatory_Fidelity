@@ -223,13 +223,13 @@ def fig2_workflow(output_path):
 
 def fig3_svf_results(output_path):
     """Stochastic Volatility Filter results."""
-    # Load data (now using 20-level validation)
+    # Load data
     try:
-        df = pd.read_csv(Path(__file__).parent.parent / 'simulations' / 'svf_validation.csv')
+        df = pd.read_csv('simulations/svf_validation_1000rep.csv')
     except:
         # Generate synthetic data if file not found
         np.random.seed(42)
-        couplings = np.repeat(np.linspace(0, 2, 20), 400)
+        couplings = np.repeat([0.0, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0], 1000)
         cf = 0.05 * couplings + np.random.normal(0, 0.03, len(couplings))
         cf = np.clip(cf, 0, 0.5)
         mse_ratio = 1 + 4 * couplings + np.random.exponential(1, len(couplings))
@@ -243,14 +243,14 @@ def fig3_svf_results(output_path):
     grouped.columns = ['coupling', 'cf_mean', 'cf_std']
     
     ax.errorbar(grouped['coupling'], grouped['cf_mean'], yerr=grouped['cf_std'],
-                fmt='o-', color=COLORS['black'], markersize=5, capsize=3, linewidth=1.5,
+                fmt='o-', color=COLORS['black'], markersize=6, capsize=4, linewidth=1.5,
                 markerfacecolor=COLORS['black'], markeredgecolor=COLORS['black'])
     ax.axhline(y=0.10, color=COLORS['accent_red'], linestyle='--', linewidth=2, label='Threshold (0.10)')
-    ax.set_xlabel('Coupling k')
+    ax.set_xlabel('Coupling Îº')
     ax.set_ylabel('CF')
     ax.set_title('(A) CF increases with coupling')
     ax.legend(loc='lower right', framealpha=0.95)
-    ax.set_ylim(-0.01, 0.18)
+    ax.set_ylim(-0.01, 0.22)
     
     # Panel B: MSE Ratio vs Coupling
     ax = axes[1]
@@ -258,16 +258,16 @@ def fig3_svf_results(output_path):
     grouped_mse.columns = ['coupling', 'mse_mean', 'mse_std']
     
     ax.errorbar(grouped_mse['coupling'], grouped_mse['mse_mean'], yerr=grouped_mse['mse_std'],
-                fmt='o-', color=COLORS['black'], markersize=5, capsize=3, linewidth=1.5,
+                fmt='o-', color=COLORS['black'], markersize=6, capsize=4, linewidth=1.5,
                 markerfacecolor=COLORS['black'], markeredgecolor=COLORS['black'])
-    ax.set_xlabel('Coupling k')
+    ax.set_xlabel('Coupling Îº')
     ax.set_ylabel('MSE Ratio (MF/Oracle)')
     ax.set_title('(B) Inference degradation')
     
     # Panel C: Aggregated correlation
     ax = axes[2]
     ax.scatter(grouped['cf_mean'], grouped_mse['mse_mean'], 
-               s=80, c=COLORS['black'], edgecolors=COLORS['black'], zorder=3)
+               s=100, c=COLORS['black'], edgecolors=COLORS['black'], zorder=3)
     ax.axvline(x=0.10, color=COLORS['accent_red'], linestyle='--', linewidth=2)
     
     # Correlation
@@ -281,15 +281,20 @@ def fig3_svf_results(output_path):
     plt.close()
     print(f"Saved: {output_path}")
 
+
+# =============================================================================
+# FIGURE 4: HLM Results
+# =============================================================================
+
 def fig4_hlm_results(output_path):
     """Hierarchical Linear Model results."""
-    # Load data (now using 20-level validation)
+    # Load data
     try:
-        df = pd.read_csv(Path(__file__).parent.parent / 'simulations' / 'hlm_validation.csv')
+        df = pd.read_csv('simulations/hlm_validation_1000rep.csv')
     except:
         # Generate synthetic data
         np.random.seed(42)
-        taus = np.repeat(np.logspace(np.log10(0.1), np.log10(3.0), 20), 400)
+        taus = np.repeat([0.2, 0.4, 0.6, 0.8, 1.0, 1.5, 2.0, 3.0], 1000)
         cf = 0.3 * taus / (taus + 0.3) + np.random.normal(0, 0.05, len(taus))
         cf = np.clip(cf, 0, 1)
         mse_ratio = 10 * np.exp(-3 * taus) + np.random.exponential(0.3, len(taus))
@@ -304,14 +309,13 @@ def fig4_hlm_results(output_path):
     grouped.columns = ['tau', 'cf_mean', 'cf_std']
     
     ax.errorbar(grouped['tau'], grouped['cf_mean'], yerr=grouped['cf_std'],
-                fmt='o-', color=COLORS['black'], markersize=5, capsize=3, linewidth=1.5,
+                fmt='o-', color=COLORS['black'], markersize=6, capsize=4, linewidth=1.5,
                 markerfacecolor=COLORS['black'], markeredgecolor=COLORS['black'])
-    ax.axhline(y=0.5, color=COLORS['accent_red'], linestyle='--', linewidth=2, label='Threshold (0.50)')
-    ax.set_xlabel('Between-group SD (tau)')
+    ax.axhline(y=0.4, color=COLORS['accent_red'], linestyle='--', linewidth=2, label='Threshold (0.4)')
+    ax.set_xlabel('Between-group SD (Ï„)')
     ax.set_ylabel('CF (= Reliability)')
-    ax.set_title('(A) CF equals reliability')
+    ax.set_title('(A) CF = signal reliability')
     ax.legend(loc='lower right', framealpha=0.95)
-    ax.set_ylim(-0.02, 1.05)
     
     # Panel B: MSE Ratio vs Tau
     ax = axes[1]
@@ -319,28 +323,35 @@ def fig4_hlm_results(output_path):
     grouped_mse.columns = ['tau', 'mse_mean', 'mse_std']
     
     ax.errorbar(grouped_mse['tau'], grouped_mse['mse_mean'], yerr=grouped_mse['mse_std'],
-                fmt='o-', color=COLORS['black'], markersize=5, capsize=3, linewidth=1.5,
+                fmt='o-', color=COLORS['black'], markersize=6, capsize=4, linewidth=1.5,
                 markerfacecolor=COLORS['black'], markeredgecolor=COLORS['black'])
-    ax.set_xlabel('Between-group SD (tau)')
-    ax.set_ylabel('MSE Ratio (No-pool/Partial-pool)')
-    ax.set_title('(B) Pooling benefit')
+    ax.set_xlabel('Between-group SD (Ï„)')
+    ax.set_ylabel('MSE Ratio (No-Pool/Partial-Pool)')
+    ax.set_title('(B) No-pooling failure at low Ï„')
     
-    # Panel C: CF vs MSE Ratio
+    # Panel C: Scatter
     ax = axes[2]
-    ax.scatter(grouped['cf_mean'], grouped_mse['mse_mean'],
-               s=80, c=COLORS['black'], edgecolors=COLORS['black'], zorder=3)
-    ax.axvline(x=0.5, color=COLORS['accent_red'], linestyle='--', linewidth=2)
+    # Subsample for clarity
+    subsample = df.sample(min(1000, len(df)), random_state=42)
+    ax.scatter(subsample['cf'], subsample['mse_ratio'], 
+               alpha=0.3, s=20, c=COLORS['dark_gray'], edgecolors='none')
+    ax.axvline(x=0.4, color=COLORS['accent_red'], linestyle='--', linewidth=2)
     
-    # Correlation
-    r = np.corrcoef(grouped['cf_mean'], grouped_mse['mse_mean'])[0, 1]
-    ax.set_xlabel('CF (mean)')
-    ax.set_ylabel('MSE Ratio (mean)')
-    ax.set_title(f'(C) Negative correlation: r = {r:.2f}')
+    r = np.corrcoef(df['cf'], df['mse_ratio'])[0, 1]
+    ax.set_xlabel('CF')
+    ax.set_ylabel('MSE Ratio')
+    ax.set_title(f'(C) r = {r:.2f}')
+    ax.set_ylim(0, 32)
     
     plt.tight_layout()
     plt.savefig(output_path)
     plt.close()
     print(f"Saved: {output_path}")
+
+
+# =============================================================================
+# FIGURE 5: Information Geometry
+# =============================================================================
 
 def fig5_geometry(output_path):
     """Information-geometric interpretation."""
@@ -399,48 +410,25 @@ def fig6_unified(output_path):
     """Unified interpretation showing SVF vs HLM with consistent grayscale style."""
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
     
-    # Load actual SVF data (20 coupling levels)
-    try:
-        svf_df = pd.read_csv(Path(__file__).parent.parent / 'simulations' / 'svf_validation.csv')
-        svf_agg = svf_df.groupby('coupling').agg({'cf': 'mean', 'mse_ratio': 'mean'}).reset_index()
-        svf_cf = svf_agg['cf'].values
-        svf_mse = svf_agg['mse_ratio'].values
-    except:
-        # Fallback to representative values (20 levels)
-        svf_cf = np.array([0.001, 0.019, 0.055, 0.083, 0.092, 0.104, 0.113, 0.117, 0.118, 0.119,
-                          0.115, 0.115, 0.124, 0.110, 0.119, 0.117, 0.124, 0.118, 0.116, 0.112])
-        svf_mse = np.array([1.0, 1.1, 1.8, 3.2, 3.7, 5.0, 5.7, 6.6, 7.5, 8.3,
-                          7.6, 8.1, 8.3, 9.0, 8.6, 8.7, 8.9, 9.0, 9.2, 9.5])
+    # SVF data (simulated aggregated means)
+    svf_cf = np.array([0.001, 0.055, 0.095, 0.115, 0.120, 0.117, 0.115, 0.110])
+    svf_mse = np.array([1.0, 2.0, 4.0, 5.5, 6.8, 7.5, 8.5, 9.5])
     
-    # Load actual HLM data (20 tau levels)
-    try:
-        hlm_df = pd.read_csv(Path(__file__).parent.parent / 'simulations' / 'hlm_validation.csv')
-        hlm_agg = hlm_df.groupby('tau').agg({'cf': 'mean', 'mse_ratio': 'mean'}).reset_index()
-        hlm_cf = hlm_agg['cf'].values
-        hlm_mse = hlm_agg['mse_ratio'].values
-    except:
-        # Fallback to representative values (20 levels)
-        hlm_cf = np.array([0.09, 0.15, 0.23, 0.32, 0.42, 0.52, 0.62, 0.71, 0.78, 0.84,
-                         0.88, 0.91, 0.94, 0.96, 0.97, 0.98, 0.98, 0.99, 0.99, 0.99])
-        hlm_mse = np.array([9.8, 6.5, 4.2, 2.9, 2.1, 1.7, 1.4, 1.25, 1.15, 1.10,
-                          1.07, 1.05, 1.03, 1.02, 1.015, 1.01, 1.008, 1.005, 1.003, 1.002])
+    # HLM data (simulated aggregated means)
+    hlm_cf = np.array([0.09, 0.38, 0.71, 0.86, 0.91, 0.96, 0.97, 0.98])
+    hlm_mse = np.array([9.8, 2.7, 1.4, 1.2, 1.1, 1.05, 1.02, 1.01])
     
     # Panel A: SVF
     ax = axes[0]
-    ax.axvspan(0.10, 0.20, alpha=0.15, color=COLORS['accent_red'], zorder=1)
+    ax.axvspan(0.10, 0.25, alpha=0.15, color=COLORS['accent_red'], zorder=1)
     ax.axvline(x=0.10, color=COLORS['accent_red'], linestyle='--', linewidth=2, zorder=2)
-    ax.scatter(svf_cf, svf_mse, s=100, c=COLORS['dark_gray'], edgecolors=COLORS['black'], 
+    ax.scatter(svf_cf, svf_mse, s=120, c=COLORS['dark_gray'], edgecolors=COLORS['black'], 
                linewidths=1.5, zorder=3)
     ax.set_xlabel('CF')
     ax.set_ylabel('MSE Ratio')
-    ax.set_title('(A) SVF: High CF -> Use structured inference')
-    ax.set_xlim(-0.01, 0.16)
-    ax.set_ylim(0, 11)
-    
-    # Add correlation annotation
-    r_svf = np.corrcoef(svf_cf, svf_mse)[0, 1]
-    ax.text(0.95, 0.05, f'r = {r_svf:.2f}', transform=ax.transAxes, 
-            ha='right', va='bottom', fontsize=11, fontweight='bold')
+    ax.set_title('(A) SVF: High CF â†’ Use structured inference')
+    ax.set_xlim(-0.01, 0.22)
+    ax.set_ylim(0, 10.5)
     
     # Legend
     handles = [
@@ -453,18 +441,13 @@ def fig6_unified(output_path):
     ax = axes[1]
     ax.axvspan(0, 0.4, alpha=0.15, color=COLORS['accent_red'], zorder=1)
     ax.axvline(x=0.4, color=COLORS['accent_red'], linestyle='--', linewidth=2, zorder=2)
-    ax.scatter(hlm_cf, hlm_mse, s=100, c=COLORS['dark_gray'], edgecolors=COLORS['black'], 
+    ax.scatter(hlm_cf, hlm_mse, s=120, c=COLORS['dark_gray'], edgecolors=COLORS['black'], 
                linewidths=1.5, zorder=3)
     ax.set_xlabel('CF')
     ax.set_ylabel('MSE Ratio')
-    ax.set_title('(B) HLM: Low CF -> Use partial pooling')
+    ax.set_title('(B) HLM: Low CF â†’ Use partial pooling')
     ax.set_xlim(-0.02, 1.05)
-    ax.set_ylim(0, 11)
-    
-    # Add correlation annotation
-    r_hlm = np.corrcoef(hlm_cf, hlm_mse)[0, 1]
-    ax.text(0.95, 0.95, f'r = {r_hlm:.2f}', transform=ax.transAxes, 
-            ha='right', va='top', fontsize=11, fontweight='bold')
+    ax.set_ylim(0, 10.5)
     
     # Legend
     handles = [

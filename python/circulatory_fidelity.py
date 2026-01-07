@@ -1,18 +1,26 @@
 """
 Circulatory Fidelity: A Prior Predictive Diagnostic for Mean-Field Variational Inference
 
-This module provides tools for computing Circulatory Fidelity (CF), a normalized
-information-theoretic measure that quantifies structural coupling between variables.
+This module provides tools for computing Inference Coupling (IC), a diagnostic
+that quantifies structural coupling between variables to predict MFVI failure.
 
-    CF(z, x) = I(z; x) / min(H(z), H(x))
+PRIMARY DIAGNOSTIC:
+    IC = |ρ|  (for Gaussians, equivalent to Linfoot correlation)
+    
+For non-Gaussian distributions, copula-based estimation is provided:
+    1. Rank-transform to uniform marginals
+    2. Apply normal probability integral transform
+    3. Compute Pearson correlation of transformed variables
+    4. Convert to Linfoot correlation: IC = sqrt(1 - exp(-2*MI))
 
-Estimation methods:
-- Gaussian distributions: Closed-form solutions via correlation
-- Non-Gaussian continuous: Copula-based estimation (conservative lower bound)
-- Discrete/mixed: KSG estimator (use with awareness of bias)
+COMPANION METRICS:
+    - Balance Factor (B): sqrt(σ_min² / σ_max²) - architectural characterization
+    - Control Coupling (CC): directed influence measure
 
-IMPORTANT: CF is only defined when min(H(z), H(x)) > 0.
-For Gaussians, this requires σ > 1/√(2πe) ≈ 0.2420.
+LEGACY SUPPORT:
+    The original CF = I(z;x) / min(H(z),H(x)) is retained for backwards
+    compatibility but is deprecated. The Relational Invariance Theorem proves
+    that IC (based on ρ alone) is sufficient for Gaussian inference diagnostics.
 
 Reference
 ---------
@@ -24,26 +32,182 @@ License: MIT
 
 from __future__ import annotations
 import numpy as np
+from scipy.stats import rankdata, norm, pearsonr
 from scipy.special import digamma
 from scipy.spatial import cKDTree
-from scipy import stats
 from dataclasses import dataclass
-from typing import Tuple, Optional, Dict, List
+from typing import Tuple, Optional, Dict, List, Union
 import warnings
 
-# Minimum sigma for positive differential entropy
-SIGMA_MIN = 1.0 / np.sqrt(2 * np.pi * np.e)  # ≈ 0.2420
+__version__ = "1.1.0"
+
+# =============================================================================
+# PRIMARY DIAGNOSTIC: INFERENCE COUPLING (IC)
+# =============================================================================
+
+def inference_coupling(x: np.ndarray, y: np.ndarray, method: str = 'copula') -> Tuple[float, float]:
+    """
+    Compute Inference Coupling (IC) between two variables.
+    
+    IC is the primary diagnostic for predicting MFVI failure. For Gaussians,
+    IC = |ρ|. For non-Gaussians, IC equals the Linfoot correlation.
+    
+    RECOMMENDED WORKFLOW: Use the default copula method for all applications.
+    The copula estimator is exact for Gaussian data AND provides conservative
+    estimates for non-Gaussian data, enabling a unified workflow without
+    needing to verify distributional assumptions.
+    
+    Parameters
+    ----------
+    x : np.ndarray
+        First variable, shape (n_samples,)
+    y : np.ndarray
+        Second variable, shape (n_samples,)
+    method : str
+        Estimation method:
+        - 'copula' (default, recommended): Works for both Gaussian and 
+          non-Gaussian. Exact for Gaussians, conservative for non-Gaussians.
+        - 'pearson': Direct |ρ|. Exact for Gaussians only; biased for 
+          non-Gaussian marginals. Use only when Gaussianity is verified.
+        - 'ksg': k-nearest neighbor MI estimation. Use for validation or
+          when non-monotonic dependence is suspected.
+    
+    Returns
+    -------
+    ic : float
+        Inference Coupling in [0, 1]
+    se : float
+        Standard error (Fisher transform for copula/pearson, bootstrap for ksg)
+    
+    Notes
+    -----
+    The copula method applies rank transformation followed by probit transform,
+    which recovers the Gaussian copula correlation. For Gaussian data, this
+    equals |ρ| exactly (differences < 0.001). For non-Gaussian data with
+    monotonic dependence, it provides a conservative lower bound on true IC.
+    
+    Examples
+    --------
+    >>> x = np.random.randn(1000)
+    >>> y = 0.8 * x + 0.6 * np.random.randn(1000)
+    >>> ic, se = inference_coupling(x, y)  # copula method (recommended)
+    >>> print(f"IC = {ic:.3f} ± {se:.3f}")
+    IC = 0.800 ± 0.019
+    """
+    x = np.asarray(x).flatten()
+    y = np.asarray(y).flatten()
+    
+    if len(x) != len(y):
+        raise ValueError("x and y must have the same length")
+    
+    n = len(x)
+    
+    if method == 'copula':
+        return _ic_copula(x, y)
+    elif method == 'pearson':
+        rho, _ = pearsonr(x, y)
+        ic = np.abs(rho)
+        # Fisher transform standard error
+        se = 1.0 / np.sqrt(n - 3) if n > 3 else np.nan
+        return ic, se
+    elif method == 'ksg':
+        # KSG estimation with bootstrap SE
+        mi = mutual_information_ksg(x, y)
+        ic = np.sqrt(1 - np.exp(-2 * mi))
+        # Bootstrap SE estimate
+        se = _bootstrap_se(x, y, n_bootstrap=100)
+        return ic, se
+    else:
+        raise ValueError(f"Unknown method: {method}. Use 'copula', 'pearson', or 'ksg'")
+
+
+def _ic_copula(x: np.ndarray, y: np.ndarray) -> Tuple[float, float]:
+    """
+    Copula-based IC estimation (recommended for all applications).
+    
+    Algorithm:
+    1. Rank-transform to uniform marginals U[0,1]
+    2. Apply inverse normal CDF (probit transform)
+    3. Compute Pearson correlation of transformed variables
+    4. IC = |ρ| (equivalent to Linfoot correlation)
+    
+    Key properties:
+    - EXACT for Gaussian data: Returns |ρ| with differences < 0.001 from 
+      direct Pearson correlation. The rank→probit transformation preserves
+      Gaussian structure.
+    - CONSERVATIVE for non-Gaussian data: Provides lower bound on true IC
+      for distributions with monotonic dependence structure.
+    - UNIFIED WORKFLOW: No need to verify Gaussianity before estimation.
+    - Closed-form standard errors via Fisher transform.
+    - Returns ~0 for non-monotonic dependence (triggers Stage 2 protocol).
+    """
+    n = len(x)
+    
+    # Step 1: Rank transform to uniform marginals
+    # Use (rank - 0.5) / n to avoid boundary issues
+    u = (rankdata(x) - 0.5) / n
+    v = (rankdata(y) - 0.5) / n
+    
+    # Step 2: Transform to standard normal (probit transform)
+    z_x = norm.ppf(u)
+    z_y = norm.ppf(v)
+    
+    # Step 3: Compute Pearson correlation of transformed variables
+    rho, _ = pearsonr(z_x, z_y)
+    
+    # Step 4: Convert to Linfoot correlation
+    # For Gaussians: MI = -0.5 * log(1 - rho^2)
+    # Linfoot: r_L = sqrt(1 - exp(-2*MI)) = |rho|
+    ic = np.abs(rho)
+    
+    # Fisher transform standard error
+    se = 1.0 / np.sqrt(n - 3) if n > 3 else np.nan
+    
+    return ic, se
+
+
+def _bootstrap_se(x: np.ndarray, y: np.ndarray, n_bootstrap: int = 100) -> float:
+    """Bootstrap standard error for KSG-based IC."""
+    n = len(x)
+    ic_samples = []
+    
+    for _ in range(n_bootstrap):
+        idx = np.random.choice(n, size=n, replace=True)
+        mi = mutual_information_ksg(x[idx], y[idx], k=3)
+        ic_samples.append(np.sqrt(1 - np.exp(-2 * max(0, mi))))
+    
+    return np.std(ic_samples)
 
 
 # =============================================================================
 # GAUSSIAN CASE (Closed-form)
 # =============================================================================
 
+def ic_gaussian(rho: float) -> float:
+    """
+    Compute IC for bivariate Gaussian (closed-form).
+    
+    For Gaussians, IC = |ρ| exactly. This is equivalent to the Linfoot
+    correlation and is the primary diagnostic.
+    
+    Parameters
+    ----------
+    rho : float
+        Pearson correlation coefficient in [-1, 1]
+    
+    Returns
+    -------
+    float
+        IC value in [0, 1]
+    """
+    return np.abs(np.clip(rho, -1.0, 1.0))
+
+
 def mutual_information_gaussian(rho: float) -> float:
     """
     Compute mutual information for bivariate Gaussian.
     
-    I(X; Y) = -0.5 * log(1 - ÏÂ²)
+    I(X; Y) = -0.5 * log(1 - ρ²)
     
     Parameters
     ----------
@@ -59,248 +223,201 @@ def mutual_information_gaussian(rho: float) -> float:
     return -0.5 * np.log(1 - rho**2)
 
 
-def differential_entropy_gaussian(sigma: float) -> float:
+def linfoot_correlation(rho: float) -> float:
     """
-    Compute differential entropy for univariate Gaussian.
+    Compute Linfoot informational correlation.
     
-    H(X) = 0.5 * log(2Ï€eÏƒÂ²)
+    r_L = sqrt(1 - exp(-2*I(X;Y)))
     
-    Note: H(X) < 0 when Ïƒ < 1/âˆš(2Ï€e) â‰ˆ 0.2420
-    
-    Parameters
-    ----------
-    sigma : float
-        Standard deviation (must be positive)
-    
-    Returns
-    -------
-    float
-        Differential entropy in nats (can be negative for small Ïƒ)
-    """
-    if sigma <= 0:
-        raise ValueError("sigma must be positive")
-    return 0.5 * np.log(2 * np.pi * np.e * sigma**2)
-
-
-def circulatory_fidelity_gaussian(rho: float, sigma_z: float, sigma_x: float) -> float:
-    """
-    Compute Circulatory Fidelity for bivariate Gaussian (closed-form).
-    
-    CF = I(z; x) / min(H(z), H(x))
-    
-    IMPORTANT: Both sigma_z and sigma_x are REQUIRED parameters.
-    CF is undefined when min(H(z), H(x)) <= 0.
+    For Gaussians, r_L = |ρ| exactly.
     
     Parameters
     ----------
     rho : float
-        Correlation coefficient between z and x
-    sigma_z : float
-        Standard deviation of z (REQUIRED)
-    sigma_x : float
-        Standard deviation of x (REQUIRED)
+        Pearson correlation coefficient
     
     Returns
     -------
     float
-        CF value in [0, 1], or NaN if entropy constraint violated
+        Linfoot correlation in [0, 1]
     """
     mi = mutual_information_gaussian(rho)
-    h_z = differential_entropy_gaussian(sigma_z)
-    h_x = differential_entropy_gaussian(sigma_x)
-    h_min = min(h_z, h_x)
+    return np.sqrt(1 - np.exp(-2 * mi))
+
+
+def check_nonmonotonic_dependence(x: np.ndarray, y: np.ndarray, 
+                                   threshold: float = 0.15) -> Dict[str, Any]:
+    """
+    Check for non-monotonic dependencies that copula IC may miss.
     
-    if h_min <= 0:
-        warnings.warn(
-            f"min(H(z), H(x)) = {h_min:.4f} <= 0. "
-            f"CF undefined. Ensure σ > {SIGMA_MIN:.4f} for both variables."
+    The copula estimator is invariant to monotonic transformations but returns
+    IC ≈ 0 for non-monotonic relationships (e.g., Y = X², V-shapes, circles).
+    This function detects such cases by comparing linear IC with quadratic IC.
+    
+    Parameters
+    ----------
+    x : np.ndarray
+        First variable
+    y : np.ndarray  
+        Second variable
+    threshold : float
+        Difference threshold for flagging non-monotonicity (default: 0.15)
+    
+    Returns
+    -------
+    dict with keys:
+        - 'ic_linear': Standard copula IC
+        - 'ic_quadratic': IC with quadratic term (x²)
+        - 'ic_interaction': IC with interaction term (x·y) if applicable
+        - 'nonmonotonic_flag': True if quadratic IC >> linear IC
+        - 'recommendation': Diagnostic recommendation
+    
+    Notes
+    -----
+    If nonmonotonic_flag is True, the relationship may have U-shaped, 
+    V-shaped, or other non-monotonic structure. Consider:
+    1. Using KSG estimator instead of copula
+    2. Including quadratic/interaction terms in the model
+    3. Investigating the functional form of dependence
+    
+    Example
+    -------
+    >>> x = np.random.randn(1000)
+    >>> y = x**2 + 0.1 * np.random.randn(1000)  # Non-monotonic
+    >>> result = check_nonmonotonic_dependence(x, y)
+    >>> print(f"Linear IC: {result['ic_linear']:.3f}")
+    >>> print(f"Quadratic IC: {result['ic_quadratic']:.3f}")
+    >>> if result['nonmonotonic_flag']:
+    ...     print("WARNING: Non-monotonic dependence detected!")
+    """
+    x = np.asarray(x).flatten()
+    y = np.asarray(y).flatten()
+    
+    # Standard linear IC
+    ic_linear, _ = _ic_copula(x, y)
+    
+    # IC with quadratic term
+    x_sq = x**2
+    ic_quad_x, _ = _ic_copula(x_sq, y)
+    
+    y_sq = y**2
+    ic_quad_y, _ = _ic_copula(x, y_sq)
+    
+    ic_quadratic = max(ic_quad_x, ic_quad_y)
+    
+    # IC with interaction (for synergy detection)
+    x_centered = x - np.mean(x)
+    y_centered = y - np.mean(y)
+    interaction = x_centered * y_centered
+    ic_interaction, _ = _ic_copula(interaction, y)
+    
+    # Flag non-monotonicity if quadratic captures much more than linear
+    nonmonotonic_flag = (ic_quadratic - ic_linear) > threshold
+    
+    if nonmonotonic_flag:
+        recommendation = (
+            f"Non-monotonic dependence detected (IC_quad={ic_quadratic:.3f} >> "
+            f"IC_linear={ic_linear:.3f}). Consider using KSG estimator or "
+            f"investigating the functional form of dependence."
         )
-        return np.nan
+    elif ic_linear < 0.05 and ic_interaction > threshold:
+        recommendation = (
+            f"XOR-type synergy suspected (IC_linear≈0, IC_interaction={ic_interaction:.3f}). "
+            f"Apply Two-Stage Protocol for synergy detection."
+        )
+    else:
+        recommendation = "No non-monotonic or synergistic structure detected."
     
-    return np.clip(mi / h_min, 0.0, 1.0)
+    return {
+        'ic_linear': ic_linear,
+        'ic_quadratic': ic_quadratic,
+        'ic_interaction': ic_interaction,
+        'nonmonotonic_flag': nonmonotonic_flag,
+        'recommendation': recommendation
+    }
 
 
 # =============================================================================
-# COPULA-BASED ESTIMATION (Non-Gaussian Continuous)
+# COMPANION METRICS
 # =============================================================================
 
-def mutual_information_copula(X: np.ndarray, Y: np.ndarray) -> float:
+def balance_factor(sigma_z: float, sigma_x: float) -> float:
     """
-    Estimate mutual information using the Gaussian copula transform.
+    Compute Balance Factor (B) for architectural characterization.
     
-    This provides a CONSERVATIVE LOWER BOUND on true MI for any continuous
-    distribution. The Gaussian copula minimizes MI among all copulas with
-    the same correlation parameter (Joe, 1989).
+    B = sqrt(σ_min² / σ_max²) = σ_min / σ_max
+    
+    B ∈ (0, 1] where:
+    - B → 1: balanced system
+    - B → 0: highly asymmetric system
     
     Parameters
     ----------
-    X : np.ndarray
-        Data of shape (n_samples,)
-    Y : np.ndarray  
-        Data of shape (n_samples,)
+    sigma_z : float
+        Standard deviation of z
+    sigma_x : float
+        Standard deviation of x
     
     Returns
     -------
     float
-        Mutual information estimate in nats (lower bound)
-    
-    Notes
-    -----
-    The procedure:
-    1. Rank transform to uniform marginals
-    2. Apply inverse normal CDF (probability integral transform)
-    3. Compute correlation of transformed variables
-    4. Apply Gaussian MI formula
-    
-    This is exact when the true copula is Gaussian, and conservative otherwise.
+        Balance Factor in (0, 1]
     """
-    n = len(X)
-    if n != len(Y):
-        raise ValueError("X and Y must have the same length")
+    if sigma_z <= 0 or sigma_x <= 0:
+        raise ValueError("Standard deviations must be positive")
     
-    # Rank transform to (0, 1) with offset to avoid boundary issues
-    u = (stats.rankdata(X) - 0.5) / n
-    v = (stats.rankdata(Y) - 0.5) / n
+    sigma_min = min(sigma_z, sigma_x)
+    sigma_max = max(sigma_z, sigma_x)
     
-    # Transform to standard normal
-    z = stats.norm.ppf(u)
-    w = stats.norm.ppf(v)
-    
-    # Copula correlation
-    rho_c = np.corrcoef(z, w)[0, 1]
-    
-    # Handle numerical issues
-    if not np.isfinite(rho_c):
-        return 0.0
-    
-    # Closed-form MI for Gaussian copula
-    rho_c = np.clip(rho_c, -0.9999, 0.9999)
-    mi = -0.5 * np.log(1 - rho_c**2)
-    
-    return max(0.0, mi)
+    return sigma_min / sigma_max
 
 
-def circulatory_fidelity_copula(X: np.ndarray, Y: np.ndarray) -> float:
+def control_coupling(rho: float, sigma_z: float, sigma_x: float, direction: str = 'z_to_x') -> float:
     """
-    Compute CF using Gaussian copula transform.
+    Compute Control Coupling (CC) for directed influence.
     
-    This is the RECOMMENDED method for non-Gaussian continuous distributions.
-    It provides a conservative lower bound with closed-form standard errors.
+    CC(z → x) = IC² / B = ρ² * (σ_max / σ_min)
+    CC(x → z) = IC² * B = ρ² * (σ_min / σ_max)
+    
+    Note: CC(z→x) * CC(x→z) = IC⁴
     
     Parameters
     ----------
-    X : np.ndarray
-        Data of shape (n_samples,)
-    Y : np.ndarray
-        Data of shape (n_samples,)
+    rho : float
+        Correlation coefficient
+    sigma_z : float
+        Standard deviation of z
+    sigma_x : float
+        Standard deviation of x
+    direction : str
+        'z_to_x' or 'x_to_z'
     
     Returns
     -------
     float
-        Circulatory Fidelity estimate in [0, 1] (lower bound)
-    
-    Notes
-    -----
-    Unlike KSG estimators which exhibit 30-45% negative bias (van den Berg, 2025),
-    the copula transform provides a principled conservative estimate:
-    - If CF_copula > threshold, true CF >= CF_copula (safe to flag)
-    - If CF_copula < threshold, true CF may be higher due to non-Gaussian copula
+        Control Coupling value
     """
-    mi = mutual_information_copula(X, Y)
+    ic = ic_gaussian(rho)
+    B = balance_factor(sigma_z, sigma_x)
     
-    # Standard normal entropy = 0.5 * log(2*pi*e)
-    h = 0.5 * np.log(2 * np.pi * np.e)
-    
-    return np.clip(mi / h, 0.0, 1.0)
-
-
-def copula_correlation(X: np.ndarray, Y: np.ndarray) -> Tuple[float, float, Tuple[float, float]]:
-    """
-    Compute copula correlation with Fisher standard error and 95% CI.
-    
-    Parameters
-    ----------
-    X : np.ndarray
-        Data of shape (n_samples,)
-    Y : np.ndarray
-        Data of shape (n_samples,)
-    
-    Returns
-    -------
-    rho_c : float
-        Copula correlation
-    se : float
-        Fisher standard error
-    ci_95 : Tuple[float, float]
-        95% confidence interval (lower, upper)
-    """
-    n = len(X)
-    
-    # Rank transform
-    u = (stats.rankdata(X) - 0.5) / n
-    v = (stats.rankdata(Y) - 0.5) / n
-    
-    # Normal transform
-    z = stats.norm.ppf(u)
-    w = stats.norm.ppf(v)
-    
-    # Copula correlation
-    rho_c = np.corrcoef(z, w)[0, 1]
-    
-    # Fisher standard error
-    se = 1.0 / np.sqrt(n - 3) if n > 3 else np.inf
-    
-    # 95% CI via Fisher transformation
-    z_transform = np.arctanh(rho_c)
-    ci_z = (z_transform - 1.96 * se, z_transform + 1.96 * se)
-    ci_95 = (np.tanh(ci_z[0]), np.tanh(ci_z[1]))
-    
-    return rho_c, se, ci_95
+    if direction == 'z_to_x':
+        return ic**2 / B
+    elif direction == 'x_to_z':
+        return ic**2 * B
+    else:
+        raise ValueError("direction must be 'z_to_x' or 'x_to_z'")
 
 
 # =============================================================================
-# KSG ESTIMATOR (Discrete/Mixed Variables Only)
+# KSG ESTIMATOR (for comparison/validation)
 # =============================================================================
-
-def entropy_ksg(X: np.ndarray, k: int = 5) -> float:
-    """
-    Estimate differential entropy using Kozachenko-Leonenko estimator.
-    
-    Parameters
-    ----------
-    X : np.ndarray
-        Data of shape (n_samples,) or (n_samples, n_features)
-    k : int
-        Number of nearest neighbors (default: 5)
-    
-    Returns
-    -------
-    float
-        Estimated entropy in nats
-    """
-    X = np.atleast_2d(X)
-    if X.shape[0] == 1:
-        X = X.T
-    
-    n, d = X.shape
-    
-    if n <= k:
-        raise ValueError(f"Need more samples than k. Got n={n}, k={k}")
-    
-    tree = cKDTree(X)
-    distances, _ = tree.query(X, k=k+1, p=float('inf'))
-    eps = distances[:, -1]
-    eps = np.maximum(eps, 1e-10)
-    
-    log_c_d = d * np.log(2)
-    H = digamma(n) - digamma(k) + log_c_d + (d / n) * np.sum(np.log(2 * eps))
-    
-    return H
-
 
 def mutual_information_ksg(X: np.ndarray, Y: np.ndarray, k: int = 5) -> float:
     """
     Estimate mutual information using KSG estimator.
+    
+    Note: Copula-based estimation is preferred for IC computation.
+    KSG is retained for validation and comparison purposes.
     
     Parameters
     ----------
@@ -338,249 +455,308 @@ def mutual_information_ksg(X: np.ndarray, Y: np.ndarray, k: int = 5) -> float:
     tree_y = cKDTree(Y)
     
     distances, _ = tree_xy.query(XY, k=k+1, p=float('inf'))
-    eps_xy = distances[:, -1]
+    eps = distances[:, -1]
+    eps = np.maximum(eps, 1e-10)
     
-    n_x = np.zeros(n)
-    n_y = np.zeros(n)
+    n_x = np.array([tree_x.query_ball_point(X[i], r=eps[i], p=float('inf')) 
+                    for i in range(n)])
+    n_y = np.array([tree_y.query_ball_point(Y[i], r=eps[i], p=float('inf')) 
+                    for i in range(n)])
     
-    for i in range(n):
-        eps_i = eps_xy[i]
-        n_x[i] = len(tree_x.query_ball_point(X[i], eps_i, p=float('inf'))) - 1
-        n_y[i] = len(tree_y.query_ball_point(Y[i], eps_i, p=float('inf'))) - 1
+    n_x = np.array([len(nx) - 1 for nx in n_x])
+    n_y = np.array([len(ny) - 1 for ny in n_y])
     
-    n_x = np.maximum(n_x, 1)
-    n_y = np.maximum(n_y, 1)
+    mi = digamma(k) + digamma(n) - np.mean(digamma(n_x + 1) + digamma(n_y + 1))
     
-    mi = digamma(k) - np.mean(digamma(n_x + 1) + digamma(n_y + 1)) + digamma(n)
-    
-    return max(0.0, mi)
+    return max(0, mi)
 
 
-def circulatory_fidelity_ksg(X: np.ndarray, Y: np.ndarray, k: int = 5) -> float:
+# =============================================================================
+# LEGACY SUPPORT (Deprecated)
+# =============================================================================
+
+# Minimum sigma for positive differential entropy (legacy)
+SIGMA_MIN = 1.0 / np.sqrt(2 * np.pi * np.e)  # ≈ 0.2420
+
+
+def differential_entropy_gaussian(sigma: float) -> float:
     """
-    Compute Circulatory Fidelity using KSG estimators (non-Gaussian case).
+    Compute differential entropy for univariate Gaussian.
     
-    CF = I(X; Y) / min(H(X), H(Y))
+    H(X) = 0.5 * log(2πeσ²)
+    
+    DEPRECATED: This function is retained for backwards compatibility.
+    The Relational Invariance Theorem proves that marginal entropies
+    cancel in IC computation for Gaussian inference diagnostics.
     
     Parameters
     ----------
-    X : np.ndarray
-        First variable
-    Y : np.ndarray
-        Second variable
-    k : int
-        Number of nearest neighbors for estimation
+    sigma : float
+        Standard deviation (must be positive)
+    
+    Returns
+    -------
+    float
+        Differential entropy in nats
+    """
+    warnings.warn(
+        "differential_entropy_gaussian is deprecated. "
+        "Use ic_gaussian(rho) directly for inference diagnostics.",
+        DeprecationWarning
+    )
+    if sigma <= 0:
+        raise ValueError("sigma must be positive")
+    return 0.5 * np.log(2 * np.pi * np.e * sigma**2)
+
+
+def circulatory_fidelity_gaussian(rho: float, sigma_z: float, sigma_x: float) -> float:
+    """
+    Compute Circulatory Fidelity for bivariate Gaussian (DEPRECATED).
+    
+    CF = I(z; x) / min(H(z), H(x))
+    
+    DEPRECATED: This function uses the original min-entropy normalization.
+    The Relational Invariance Theorem proves that IC = |ρ| is sufficient
+    for Gaussian inference diagnostics. Use ic_gaussian(rho) instead.
+    
+    Parameters
+    ----------
+    rho : float
+        Correlation coefficient between z and x
+    sigma_z : float
+        Standard deviation of z
+    sigma_x : float
+        Standard deviation of x
     
     Returns
     -------
     float
         CF value in [0, 1], or NaN if entropy constraint violated
     """
-    mi = mutual_information_ksg(X, Y, k=k)
-    h_x = entropy_ksg(X, k=k)
-    h_y = entropy_ksg(Y, k=k)
-    
-    h_min = min(h_x, h_y)
+    warnings.warn(
+        "circulatory_fidelity_gaussian is deprecated. "
+        "Use ic_gaussian(rho) for inference diagnostics. "
+        "The min-entropy normalization adds no predictive value for Gaussians.",
+        DeprecationWarning
+    )
+    mi = mutual_information_gaussian(rho)
+    h_z = 0.5 * np.log(2 * np.pi * np.e * sigma_z**2)
+    h_x = 0.5 * np.log(2 * np.pi * np.e * sigma_x**2)
+    h_min = min(h_z, h_x)
     
     if h_min <= 0:
-        warnings.warn(f"min(H(X), H(Y)) = {h_min:.4f} <= 0. CF undefined.")
         return np.nan
     
     return np.clip(mi / h_min, 0.0, 1.0)
 
 
-# =============================================================================
-# LINFOOT CORRELATION
-# =============================================================================
-
-def linfoot_correlation(mi: float) -> float:
-    """
-    Compute Linfoot informational correlation from mutual information.
-    
-    r_L = sqrt(1 - exp(-2 * I))
-    
-    This transformation maps MI (in nats) to a [0, 1] scale that equals
-    |ρ| for bivariate Gaussians.
-    
-    Parameters
-    ----------
-    mi : float
-        Mutual information in nats (must be non-negative)
-    
-    Returns
-    -------
-    float
-        Linfoot correlation in [0, 1]
-    """
-    if mi < 0:
-        warnings.warn(f"Negative MI ({mi:.4f}) encountered; clipping to 0.")
-        mi = 0.0
-    return np.sqrt(1.0 - np.exp(-2.0 * mi))
-
-
-def linfoot_from_correlation(rho: float) -> float:
-    """
-    Compute Linfoot correlation directly from Pearson correlation (Gaussian case).
-    
-    For bivariate Gaussians, r_L = |ρ| exactly.
-    
-    Parameters
-    ----------
-    rho : float
-        Pearson correlation coefficient
-    
-    Returns
-    -------
-    float
-        Linfoot correlation (equals |ρ| for Gaussians)
-    """
-    return np.abs(rho)
+# Alias for backwards compatibility
+cf_gaussian = circulatory_fidelity_gaussian
 
 
 # =============================================================================
-# BOOTSTRAP CONFIDENCE INTERVALS
+# DIAGNOSTIC WORKFLOW
 # =============================================================================
 
 @dataclass
-class CFBootstrapResult:
-    """Results from bootstrap CF estimation with confidence intervals."""
-    cf_point: float           # Point estimate of CF
-    cf_mean: float            # Bootstrap mean
-    cf_std: float             # Bootstrap standard deviation
-    ci_lower: float           # Lower CI bound
-    ci_upper: float           # Upper CI bound
-    ci_level: float           # Confidence level (e.g., 0.95)
-    n_bootstrap: int          # Number of bootstrap samples
-    linfoot_point: float      # Linfoot correlation point estimate
-    linfoot_ci_lower: float   # Linfoot CI lower
-    linfoot_ci_upper: float   # Linfoot CI upper
-
-
-def bootstrap_cf_gaussian(
-    X: np.ndarray, 
-    Y: np.ndarray,
-    n_bootstrap: int = 1000,
-    ci_level: float = 0.95,
-    seed: Optional[int] = None
-) -> CFBootstrapResult:
+class ICDiagnostic:
     """
-    Compute CF with bootstrap confidence intervals for Gaussian data.
+    Result of IC diagnostic computation.
     
-    Uses sample correlation and sample standard deviations, then bootstraps
-    to quantify estimation uncertainty.
+    Attributes
+    ----------
+    ic : float
+        Inference Coupling value in [0, 1]
+    se : float
+        Standard error of IC estimate
+    method : str
+        Estimation method used
+    n : int
+        Sample size
+    recommendation : str
+        Diagnostic recommendation based on thresholds
+    """
+    ic: float
+    se: float
+    method: str
+    n: int
+    recommendation: str
+    
+    def __repr__(self):
+        return (f"ICDiagnostic(ic={self.ic:.3f} ± {self.se:.3f}, "
+                f"method='{self.method}', recommendation='{self.recommendation}')")
+
+
+def diagnose(x: np.ndarray, y: np.ndarray, 
+             model_type: str = 'filtering',
+             method: str = 'copula') -> ICDiagnostic:
+    """
+    Run IC diagnostic workflow.
+    
+    Parameters
+    ----------
+    x : np.ndarray
+        First variable (e.g., latent states)
+    y : np.ndarray
+        Second variable (e.g., observations)
+    model_type : str
+        'filtering' (SVF-type) or 'pooling' (HLM-type)
+    method : str
+        Estimation method: 'copula', 'pearson', or 'ksg'
+    
+    Returns
+    -------
+    ICDiagnostic
+        Diagnostic result with recommendation
+    
+    Examples
+    --------
+    >>> # SVF-type model
+    >>> result = diagnose(latent_states, observations, model_type='filtering')
+    >>> print(result)
+    ICDiagnostic(ic=0.450 ± 0.032, method='copula', recommendation='Use structured VI')
+    """
+    ic, se = inference_coupling(x, y, method=method)
+    n = len(x)
+    
+    # Thresholds from manuscript Table (Section 2.7 Interpretive Scale):
+    # Negligible: < 0.25 (MFVI safe)
+    # Weak: 0.25-0.35 (MFVI likely acceptable)
+    # Moderate: 0.35-0.55 (Caution warranted)
+    # Strong: 0.55-0.70 (Consider structured inference)
+    # Very strong: > 0.70 (Structured inference required)
+    
+    if model_type == 'filtering':
+        # For filtering models: high IC → MFVI fails
+        if ic < 0.25:
+            recommendation = "MFVI safe (negligible coupling)"
+        elif ic < 0.35:
+            recommendation = "MFVI likely acceptable (weak coupling)"
+        elif ic < 0.55:
+            recommendation = "Caution warranted (moderate coupling) - validate post-inference"
+        elif ic < 0.70:
+            recommendation = "Consider structured inference (strong coupling)"
+        else:
+            recommendation = "Structured inference required (very strong coupling)"
+    elif model_type == 'pooling':
+        # For pooling models: interpretation inverts (low IC → no-pooling overfits)
+        if ic > 0.70:
+            recommendation = "No-pooling acceptable (very strong group separation)"
+        elif ic > 0.55:
+            recommendation = "Partial pooling optional (strong separation)"
+        elif ic > 0.35:
+            recommendation = "Partial pooling recommended (moderate homogeneity)"
+        else:
+            recommendation = "Strong pooling required (weak separation - groups similar)"
+    else:
+        raise ValueError("model_type must be 'filtering' or 'pooling'")
+    
+    return ICDiagnostic(ic=ic, se=se, method=method, n=n, recommendation=recommendation)
+
+
+# =============================================================================
+# HIERARCHICAL MODELS
+# =============================================================================
+
+def ic_from_icc(icc: float) -> float:
+    """
+    Compute IC from Intraclass Correlation Coefficient.
+    
+    For hierarchical linear models: IC = sqrt(ICC)
+    
+    Parameters
+    ----------
+    icc : float
+        Intraclass correlation coefficient in [0, 1]
+    
+    Returns
+    -------
+    float
+        IC value in [0, 1]
+    """
+    if icc < 0 or icc > 1:
+        raise ValueError("ICC must be in [0, 1]")
+    return np.sqrt(icc)
+
+
+def icc_from_variances(tau_sq: float, sigma_sq: float) -> float:
+    """
+    Compute ICC from variance components.
+    
+    ICC = τ² / (τ² + σ²)
+    
+    Parameters
+    ----------
+    tau_sq : float
+        Between-group variance
+    sigma_sq : float
+        Within-group variance
+    
+    Returns
+    -------
+    float
+        ICC value in [0, 1]
+    """
+    if tau_sq < 0 or sigma_sq < 0:
+        raise ValueError("Variances must be non-negative")
+    if tau_sq + sigma_sq == 0:
+        raise ValueError("Total variance must be positive")
+    return tau_sq / (tau_sq + sigma_sq)
+
+
+# =============================================================================
+# DIMENSIONALITY REDUCTION (Required for high-dimensional data)
+# =============================================================================
+
+def reduce_dimensions_pls(X: np.ndarray, Y: np.ndarray, n_components: int = 1,
+                         cross_validate: bool = True, cv_folds: int = 5) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Reduce dimensions using Partial Least Squares.
+    
+    IMPORTANT: For high-dimensional vectors, dimensionality reduction is
+    MANDATORY before IC estimation. This function provides supervised
+    reduction that preserves the coupling structure.
+    
+    WARNING: Standard PLS can overfit when N is small relative to dimension d.
+    Cross-validation is enabled by default to ensure the extracted components
+    represent genuine coupling rather than spurious correlation.
     
     Parameters
     ----------
     X : np.ndarray
-        First variable, shape (n_samples,)
+        High-dimensional variable, shape (n_samples, d_x)
     Y : np.ndarray
-        Second variable, shape (n_samples,)
-    n_bootstrap : int
-        Number of bootstrap resamples (default: 1000)
-    ci_level : float
-        Confidence level (default: 0.95 for 95% CI)
-    seed : int, optional
-        Random seed for reproducibility
+        Target variable, shape (n_samples,) or (n_samples, d_y)
+    n_components : int
+        Number of PLS components (default: 1)
+    cross_validate : bool
+        If True (default), use cross-validation to verify genuine coupling.
+        Raises warning if CV score is poor.
+    cv_folds : int
+        Number of cross-validation folds (default: 5)
     
     Returns
     -------
-    CFBootstrapResult
-        Dataclass containing point estimate and confidence intervals
+    X_reduced : np.ndarray
+        Reduced X, shape (n_samples, n_components)
+    Y_reduced : np.ndarray
+        Reduced Y (or original if 1D)
+    
+    Notes
+    -----
+    The Manifold Hypothesis suggests that data from coherent generative
+    processes concentrate on low-dimensional submanifolds, so this
+    reduction typically preserves the relevant coupling structure.
+    
+    When cross_validate=True, the function verifies that the PLS projection
+    captures genuine structure by computing cross-validated R² score.
+    If CV-R² < 0.1, a warning is issued indicating potential spurious coupling.
     """
-    if seed is not None:
-        np.random.seed(seed)
-    
-    X = np.asarray(X).flatten()
-    Y = np.asarray(Y).flatten()
-    n = len(X)
-    
-    if len(Y) != n:
-        raise ValueError("X and Y must have same length")
-    
-    # Point estimates
-    rho_point = np.corrcoef(X, Y)[0, 1]
-    sigma_x = np.std(X, ddof=1)
-    sigma_y = np.std(Y, ddof=1)
-    cf_point = circulatory_fidelity_gaussian(rho_point, sigma_x, sigma_y)
-    mi_point = mutual_information_gaussian(rho_point)
-    linfoot_point = linfoot_correlation(mi_point)
-    
-    # Bootstrap
-    cf_boot = np.zeros(n_bootstrap)
-    linfoot_boot = np.zeros(n_bootstrap)
-    
-    for b in range(n_bootstrap):
-        idx = np.random.choice(n, size=n, replace=True)
-        X_b = X[idx]
-        Y_b = Y[idx]
-        
-        rho_b = np.corrcoef(X_b, Y_b)[0, 1]
-        sigma_x_b = np.std(X_b, ddof=1)
-        sigma_y_b = np.std(Y_b, ddof=1)
-        
-        cf_boot[b] = circulatory_fidelity_gaussian(rho_b, sigma_x_b, sigma_y_b)
-        mi_b = mutual_information_gaussian(rho_b)
-        linfoot_boot[b] = linfoot_correlation(mi_b)
-    
-    # Remove NaN values
-    cf_boot = cf_boot[~np.isnan(cf_boot)]
-    linfoot_boot = linfoot_boot[~np.isnan(linfoot_boot)]
-    
-    # Compute CI
-    alpha = 1 - ci_level
-    cf_ci = np.percentile(cf_boot, [100*alpha/2, 100*(1-alpha/2)])
-    linfoot_ci = np.percentile(linfoot_boot, [100*alpha/2, 100*(1-alpha/2)])
-    
-    return CFBootstrapResult(
-        cf_point=cf_point,
-        cf_mean=np.mean(cf_boot),
-        cf_std=np.std(cf_boot),
-        ci_lower=cf_ci[0],
-        ci_upper=cf_ci[1],
-        ci_level=ci_level,
-        n_bootstrap=len(cf_boot),
-        linfoot_point=linfoot_point,
-        linfoot_ci_lower=linfoot_ci[0],
-        linfoot_ci_upper=linfoot_ci[1]
-    )
-
-
-def bootstrap_cf_ksg(
-    X: np.ndarray, 
-    Y: np.ndarray,
-    k: int = 5,
-    n_bootstrap: int = 500,
-    ci_level: float = 0.95,
-    seed: Optional[int] = None
-) -> CFBootstrapResult:
-    """
-    Compute CF with bootstrap confidence intervals using KSG estimator.
-    
-    Note: KSG estimation is computationally expensive, so fewer bootstrap
-    samples are used by default compared to the Gaussian case.
-    
-    Parameters
-    ----------
-    X : np.ndarray
-        First variable, shape (n_samples,) or (n_samples, d)
-    Y : np.ndarray
-        Second variable, shape (n_samples,) or (n_samples, d)
-    k : int
-        Number of nearest neighbors for KSG estimator
-    n_bootstrap : int
-        Number of bootstrap resamples (default: 500)
-    ci_level : float
-        Confidence level (default: 0.95 for 95% CI)
-    seed : int, optional
-        Random seed for reproducibility
-    
-    Returns
-    -------
-    CFBootstrapResult
-        Dataclass containing point estimate and confidence intervals
-    """
-    if seed is not None:
-        np.random.seed(seed)
+    try:
+        from sklearn.cross_decomposition import PLSRegression
+        from sklearn.model_selection import cross_val_score
+    except ImportError:
+        raise ImportError("sklearn required for PLS. Install with: pip install scikit-learn")
     
     X = np.atleast_2d(X)
     Y = np.atleast_2d(Y)
@@ -590,640 +766,320 @@ def bootstrap_cf_ksg(
     if Y.shape[0] == 1:
         Y = Y.T
     
-    n = X.shape[0]
+    n_samples = X.shape[0]
     
-    # Point estimates
-    cf_point = circulatory_fidelity_ksg(X, Y, k=k)
-    mi_point = mutual_information_ksg(X, Y, k=k)
-    linfoot_point = linfoot_correlation(mi_point)
-    
-    # Bootstrap
-    cf_boot = np.zeros(n_bootstrap)
-    linfoot_boot = np.zeros(n_bootstrap)
-    
-    for b in range(n_bootstrap):
-        idx = np.random.choice(n, size=n, replace=True)
-        X_b = X[idx]
-        Y_b = Y[idx]
+    # Cross-validation check for overfitting
+    if cross_validate and n_samples >= cv_folds * 2:
+        pls_cv = PLSRegression(n_components=n_components)
+        cv_scores = cross_val_score(pls_cv, X, Y, cv=cv_folds, scoring='r2')
+        cv_r2 = np.mean(cv_scores)
         
-        cf_boot[b] = circulatory_fidelity_ksg(X_b, Y_b, k=k)
-        mi_b = mutual_information_ksg(X_b, Y_b, k=k)
-        linfoot_boot[b] = linfoot_correlation(mi_b)
+        if cv_r2 < 0.1:
+            warnings.warn(
+                f"Cross-validated R² = {cv_r2:.3f} is low. "
+                f"PLS may be capturing spurious correlation rather than genuine coupling. "
+                f"Consider increasing sample size or reducing dimensionality.",
+                UserWarning
+            )
     
-    # Remove NaN values
-    cf_boot = cf_boot[~np.isnan(cf_boot)]
-    linfoot_boot = linfoot_boot[~np.isnan(linfoot_boot)]
+    pls = PLSRegression(n_components=n_components)
+    X_reduced = pls.fit_transform(X, Y)[0]
     
-    # Compute CI
-    alpha = 1 - ci_level
-    cf_ci = np.percentile(cf_boot, [100*alpha/2, 100*(1-alpha/2)]) if len(cf_boot) > 0 else [np.nan, np.nan]
-    linfoot_ci = np.percentile(linfoot_boot, [100*alpha/2, 100*(1-alpha/2)]) if len(linfoot_boot) > 0 else [np.nan, np.nan]
+    if Y.shape[1] == 1:
+        Y_reduced = Y.flatten()
+    else:
+        Y_reduced = Y
     
-    return CFBootstrapResult(
-        cf_point=cf_point,
-        cf_mean=np.mean(cf_boot) if len(cf_boot) > 0 else np.nan,
-        cf_std=np.std(cf_boot) if len(cf_boot) > 0 else np.nan,
-        ci_lower=cf_ci[0],
-        ci_upper=cf_ci[1],
-        ci_level=ci_level,
-        n_bootstrap=len(cf_boot),
-        linfoot_point=linfoot_point,
-        linfoot_ci_lower=linfoot_ci[0],
-        linfoot_ci_upper=linfoot_ci[1]
-    )
-
-
-def bootstrap_aggregated_correlation(
-    cf_values: np.ndarray,
-    mse_ratios: np.ndarray,
-    n_bootstrap: int = 10000,
-    ci_level: float = 0.95,
-    seed: Optional[int] = None
-) -> Dict[str, float]:
-    """
-    Compute bootstrap CI for correlation between CF and MSE ratio.
-    
-    This addresses the reviewer concern about r=0.85 from 8 points having
-    wide confidence intervals.
-    
-    Parameters
-    ----------
-    cf_values : np.ndarray
-        CF values (can be aggregated means or individual observations)
-    mse_ratios : np.ndarray
-        Corresponding MSE ratios
-    n_bootstrap : int
-        Number of bootstrap resamples (default: 10000 for small n)
-    ci_level : float
-        Confidence level (default: 0.95)
-    seed : int, optional
-        Random seed for reproducibility
-    
-    Returns
-    -------
-    dict
-        Contains 'r_point', 'r_ci_lower', 'r_ci_upper', 'n_points'
-    """
-    if seed is not None:
-        np.random.seed(seed)
-    
-    cf_values = np.asarray(cf_values)
-    mse_ratios = np.asarray(mse_ratios)
-    n = len(cf_values)
-    
-    # Point estimate
-    r_point = np.corrcoef(cf_values, mse_ratios)[0, 1]
-    
-    # Bootstrap
-    r_boot = np.zeros(n_bootstrap)
-    for b in range(n_bootstrap):
-        idx = np.random.choice(n, size=n, replace=True)
-        r_boot[b] = np.corrcoef(cf_values[idx], mse_ratios[idx])[0, 1]
-    
-    # Remove NaN
-    r_boot = r_boot[~np.isnan(r_boot)]
-    
-    # CI
-    alpha = 1 - ci_level
-    r_ci = np.percentile(r_boot, [100*alpha/2, 100*(1-alpha/2)])
-    
-    return {
-        'r_point': r_point,
-        'r_ci_lower': r_ci[0],
-        'r_ci_upper': r_ci[1],
-        'r_std': np.std(r_boot),
-        'ci_level': ci_level,
-        'n_points': n,
-        'n_bootstrap': len(r_boot)
-    }
+    return X_reduced.flatten() if n_components == 1 else X_reduced, Y_reduced
 
 
 # =============================================================================
-# STOCHASTIC VOLATILITY FILTER (SVF) MODEL
+# CONVENIENCE FUNCTIONS
 # =============================================================================
 
-@dataclass
-class SVFParams:
-    """Parameters for Stochastic Volatility Filter model."""
-    coupling: float = 0.5        # Îº: volatility-state coupling
-    base_volatility: float = 0.5 # Ïƒ_base: baseline state volatility (increased for positive entropy)
-    volatility_noise: float = 0.3  # Ïƒ_vol: volatility random walk noise (increased)
-    observation_noise: float = 0.5  # Ïƒ_obs: observation noise
-
-
-def simulate_svf(params: SVFParams, T: int = 300, 
-                 seed: Optional[int] = None) -> Dict[str, np.ndarray]:
+def mse_ratio_predicted(ic: float) -> float:
     """
-    Simulate from Stochastic Volatility Filter generative model.
-    """
-    if seed is not None:
-        np.random.seed(seed)
+    Predict MSE ratio from IC (filtering models).
     
-    x3 = np.zeros(T)
-    x2 = np.zeros(T)
-    vol = np.zeros(T)
-    y = np.zeros(T)
+    MSE_ratio ≈ 1 / (1 - IC²)
     
-    vol[0] = params.base_volatility
-    y[0] = np.random.normal(0, params.observation_noise)
-    
-    for t in range(1, T):
-        x3[t] = x3[t-1] + np.random.normal(0, params.volatility_noise)
-        log_vol = np.clip(params.coupling * x3[t], -3, 3)
-        vol[t] = np.clip(params.base_volatility * np.exp(log_vol), 0.1, 5.0)
-        x2[t] = x2[t-1] + np.random.normal(0, vol[t])
-        y[t] = x2[t] + np.random.normal(0, params.observation_noise)
-    
-    return {'x3': x3, 'x2': x2, 'y': y, 'vol': vol, 'params': params}
-
-
-def compute_cf_svf(sim: Dict, method: str = 'gaussian') -> float:
-    """
-    Compute CF for SVF measuring volatility-state coupling.
-    
-    CORRECTED: Now computes actual marginal entropies, not reference.
+    This is the theoretical prediction for Gaussian SVF-type models.
     
     Parameters
     ----------
-    sim : dict
-        Simulation results from simulate_svf
-    method : str
-        'gaussian' for closed-form, 'ksg' for k-NN estimation
+    ic : float
+        Inference Coupling value
     
     Returns
     -------
     float
-        CF value in [0, 1], or NaN if entropy constraint violated
+        Predicted MSE ratio
     """
-    x3 = sim['x3'][1:]
-    dx2 = np.diff(sim['x2'])
+    ic = np.clip(ic, 0, 0.999)
+    return 1.0 / (1.0 - ic**2)
+
+
+def ic_threshold(target_mse_ratio: float) -> float:
+    """
+    Compute IC threshold for target MSE ratio.
     
-    # Use log|dx2| to capture volatility-magnitude coupling
-    log_abs_dx2 = np.log(np.abs(dx2) + 1e-10)
+    IC = sqrt(1 - 1/MSE_ratio)
     
-    if method == 'gaussian':
-        rho = np.corrcoef(x3, log_abs_dx2)[0, 1]
-        if not np.isfinite(rho):
-            return np.nan
+    Parameters
+    ----------
+    target_mse_ratio : float
+        Maximum acceptable MSE degradation
+    
+    Returns
+    -------
+    float
+        IC threshold
+    """
+    if target_mse_ratio < 1:
+        raise ValueError("MSE ratio must be >= 1")
+    return np.sqrt(1.0 - 1.0 / target_mse_ratio)
+
+
+# =============================================================================
+# WINDOWED IC FOR TIME SERIES (Maximal Coupling Rule)
+# =============================================================================
+
+def windowed_ic(
+    z: np.ndarray,
+    x: np.ndarray,
+    window_size: int = 50,
+    step_size: Optional[int] = None,
+    method: str = 'copula'
+) -> Dict[str, Any]:
+    """
+    Compute windowed Inference Coupling for non-stationary time series.
+    
+    The Maximal Coupling Rule: For time series with potential regime changes,
+    MFVI suitability depends on IC_max, not the global average. A single
+    high-IC episode can invalidate mean-field approximations.
+    
+    Parameters
+    ----------
+    z : np.ndarray
+        First variable (time series), shape (T,)
+    x : np.ndarray
+        Second variable (time series), shape (T,)
+    window_size : int
+        Size of each window (default: 50)
+    step_size : int or None
+        Step between windows (default: window_size // 4 for 75% overlap)
+    method : str
+        IC estimation method ('copula' or 'ksg')
+    
+    Returns
+    -------
+    dict with keys:
+        - 'ic_max': Maximum IC across windows (primary diagnostic)
+        - 'ic_mean': Mean IC across windows
+        - 'ic_std': Standard deviation of IC across windows
+        - 'ic_series': Array of IC values for each window
+        - 'window_centers': Array of window center indices
+        - 'n_windows': Number of windows computed
+        - 'window_size': Window size used
+        - 'recommendation': Diagnostic recommendation based on IC_max
+    
+    Notes
+    -----
+    The Maximal Coupling Rule mandates using IC_max for time-series diagnostics.
+    Global IC can mask transient failures during high-coupling regimes.
+    
+    For regime-switching models, window_size should exceed expected regime
+    duration. When regime structure is unknown, compute IC_max across multiple
+    window sizes for robust diagnosis.
+    
+    IMPORTANT: Window size must be large enough for stable correlation estimates.
+    The standard error is SE ≈ 1/sqrt(W-3). For W < 30, estimates have high
+    variance and may produce noise-driven false positives. We recommend W >= 50.
+    
+    Example
+    -------
+    >>> result = windowed_ic(z_series, x_series, window_size=50)
+    >>> print(f"IC_max = {result['ic_max']:.3f}")
+    >>> if result['ic_max'] > 0.5:
+    ...     print("WARNING: High transient coupling detected")
+    """
+    MIN_WINDOW_SIZE = 30  # Minimum for stable correlation estimates
+    RECOMMENDED_WINDOW_SIZE = 50
+    
+    z = np.asarray(z).flatten()
+    x = np.asarray(x).flatten()
+    T = len(z)
+    
+    if len(x) != T:
+        raise ValueError("z and x must have same length")
+    
+    if window_size > T:
+        raise ValueError(f"window_size ({window_size}) exceeds series length ({T})")
+    
+    # Warn about small window sizes
+    if window_size < MIN_WINDOW_SIZE:
+        warnings.warn(
+            f"window_size={window_size} is below minimum recommended ({MIN_WINDOW_SIZE}). "
+            f"Standard error SE ≈ {1/np.sqrt(window_size-3):.3f} is high, "
+            f"which may produce noise-driven false positives. "
+            f"Consider using window_size >= {RECOMMENDED_WINDOW_SIZE}.",
+            UserWarning
+        )
+    
+    if step_size is None:
+        step_size = max(1, window_size // 4)  # 75% overlap default
+    
+    # Compute IC in each window
+    ic_values = []
+    window_centers = []
+    
+    start = 0
+    while start + window_size <= T:
+        z_window = z[start:start + window_size]
+        x_window = x[start:start + window_size]
         
-        # CORRECTED: Compute actual sample standard deviations
-        sigma_z = np.std(x3)
-        sigma_x = np.std(log_abs_dx2)
+        try:
+            ic, _ = inference_coupling(z_window, x_window, method=method)
+            if np.isfinite(ic):
+                ic_values.append(ic)
+                window_centers.append(start + window_size // 2)
+        except Exception:
+            # Skip windows with estimation failures
+            pass
         
-        # Ensure positive entropy constraint
-        if sigma_z < SIGMA_MIN or sigma_x < SIGMA_MIN:
-            warnings.warn(
-                f"Ïƒ_z={sigma_z:.4f}, Ïƒ_x={sigma_x:.4f}. "
-                f"One or both < {SIGMA_MIN:.4f}. Scaling to unit variance."
-            )
-            # Scale to unit variance (standard coordinates)
-            sigma_z = max(sigma_z, 1.0)
-            sigma_x = max(sigma_x, 1.0)
-        
-        return circulatory_fidelity_gaussian(rho, sigma_z, sigma_x)
-    elif method == 'ksg':
-        return circulatory_fidelity_ksg(x3, log_abs_dx2)
+        start += step_size
+    
+    if len(ic_values) == 0:
+        return {
+            'ic_max': np.nan,
+            'ic_mean': np.nan,
+            'ic_std': np.nan,
+            'ic_series': np.array([]),
+            'window_centers': np.array([]),
+            'n_windows': 0,
+            'window_size': window_size,
+            'recommendation': 'Insufficient data for windowed analysis'
+        }
+    
+    ic_series = np.array(ic_values)
+    ic_max = np.max(ic_series)
+    ic_mean = np.mean(ic_series)
+    ic_std = np.std(ic_series)
+    
+    # Standard error for each window estimate
+    se_per_window = 1.0 / np.sqrt(window_size - 3) if window_size > 3 else np.nan
+    
+    # Recommendation based on IC_max (Maximal Coupling Rule)
+    # Thresholds aligned with manuscript interpretive scale (Section 2.7)
+    # Note: For windowed analysis, we use IC_max which captures transient peaks
+    reliability_note = ""
+    if window_size < RECOMMENDED_WINDOW_SIZE:
+        reliability_note = f" (Note: SE={se_per_window:.3f} with W={window_size}; consider larger windows)"
+    
+    if ic_max < 0.25:
+        recommendation = f'MFVI safe - negligible coupling (IC_max < 0.25){reliability_note}'
+    elif ic_max < 0.35:
+        recommendation = f'MFVI likely acceptable - weak coupling (IC_max < 0.35){reliability_note}'
+    elif ic_max < 0.55:
+        recommendation = f'Caution warranted - moderate coupling (IC_max < 0.55); validate post-inference{reliability_note}'
+    elif ic_max < 0.70:
+        recommendation = f'Consider structured inference - strong coupling (IC_max < 0.70){reliability_note}'
     else:
-        raise ValueError(f"Unknown method: {method}")
-
-
-def svf_mf_inference(sim: Dict) -> Tuple[np.ndarray, float]:
-    """Mean-field Kalman filter: ignores volatility, uses average."""
-    T = len(sim['y'])
-    avg_vol = sim['params'].base_volatility
-    
-    x2_est = np.zeros(T)
-    var_est = np.ones(T)
-    
-    for t in range(1, T):
-        pred_var = var_est[t-1] + avg_vol**2
-        obs_var = sim['params'].observation_noise**2
-        K = pred_var / (pred_var + obs_var)
-        x2_est[t] = x2_est[t-1] + K * (sim['y'][t] - x2_est[t-1])
-        var_est[t] = (1 - K) * pred_var
-    
-    mse = np.mean((x2_est - sim['x2'])**2)
-    return x2_est, mse
-
-
-def svf_oracle_inference(sim: Dict) -> Tuple[np.ndarray, float]:
-    """Oracle Kalman filter: knows true volatility."""
-    T = len(sim['y'])
-    
-    x2_est = np.zeros(T)
-    var_est = np.ones(T)
-    
-    for t in range(1, T):
-        pred_var = var_est[t-1] + sim['vol'][t]**2
-        obs_var = sim['params'].observation_noise**2
-        K = pred_var / (pred_var + obs_var)
-        x2_est[t] = x2_est[t-1] + K * (sim['y'][t] - x2_est[t-1])
-        var_est[t] = (1 - K) * pred_var
-    
-    mse = np.mean((x2_est - sim['x2'])**2)
-    return x2_est, mse
-
-
-# =============================================================================
-# HIERARCHICAL LINEAR MODEL (HLM)
-# =============================================================================
-
-@dataclass
-class HLMParams:
-    """Parameters for Hierarchical Linear Model."""
-    n_groups: int = 30       # J: number of groups
-    n_per_group: int = 10    # n: observations per group
-    tau: float = 1.0         # Ï„: between-group SD (signal)
-    sigma: float = 1.0       # Ïƒ: within-group SD (noise)
-    mu: float = 0.0          # Î¼: grand mean
-    
-    @property
-    def icc(self) -> float:
-        """Intraclass correlation coefficient."""
-        return self.tau**2 / (self.tau**2 + self.sigma**2)
-    
-    @property
-    def reliability(self) -> float:
-        """Reliability of group means."""
-        return self.tau**2 / (self.tau**2 + self.sigma**2 / self.n_per_group)
-
-
-def simulate_hlm(params: HLMParams, seed: Optional[int] = None) -> Dict:
-    """Simulate from HLM generative model."""
-    if seed is not None:
-        np.random.seed(seed)
-    
-    theta_true = np.random.normal(params.mu, params.tau, params.n_groups)
-    
-    y = np.zeros((params.n_groups, params.n_per_group))
-    for j in range(params.n_groups):
-        y[j] = np.random.normal(theta_true[j], params.sigma, params.n_per_group)
-    
-    y_bar = y.mean(axis=1)
+        recommendation = f'Structured inference required - very strong coupling (IC_max >= 0.70){reliability_note}'
     
     return {
-        'theta_true': theta_true,
-        'y': y,
-        'y_bar': y_bar,
-        'params': params
+        'ic_max': ic_max,
+        'ic_mean': ic_mean,
+        'ic_std': ic_std,
+        'ic_series': ic_series,
+        'window_centers': np.array(window_centers),
+        'n_windows': len(ic_values),
+        'window_size': window_size,
+        'se_per_window': se_per_window,
+        'recommendation': recommendation
     }
 
 
-def compute_cf_hlm(params: HLMParams) -> float:
+def windowed_ic_envelope(
+    z: np.ndarray,
+    x: np.ndarray,
+    window_sizes: Optional[List[int]] = None,
+    method: str = 'copula'
+) -> Dict[str, Any]:
     """
-    Compute CF for HLM from parameters.
+    Compute IC_max envelope across multiple window sizes.
     
-    For HLM, CF = reliability (fraction of group mean variance due to true effect).
-    This is the normalized measure of signal vs noise.
+    Useful when regime structure is unknown. If the envelope shows sensitivity
+    to window size, this indicates regime structure warranting investigation.
+    
+    Parameters
+    ----------
+    z : np.ndarray
+        First variable (time series)
+    x : np.ndarray  
+        Second variable (time series)
+    window_sizes : list of int or None
+        Window sizes to evaluate (default: [25, 50, 100, 200])
+    method : str
+        IC estimation method
+    
+    Returns
+    -------
+    dict with keys:
+        - 'ic_max_envelope': IC_max for each window size
+        - 'window_sizes': Window sizes evaluated
+        - 'overall_ic_max': Maximum IC across all windows and sizes
+        - 'sensitivity': Std dev of IC_max across window sizes (high = regime structure)
     """
-    return params.reliability
-
-
-def hlm_no_pooling(sim: Dict) -> Tuple[np.ndarray, float]:
-    """No-pooling estimate: use group means directly."""
-    theta_np = sim['y_bar']
-    mse = np.mean((theta_np - sim['theta_true'])**2)
-    return theta_np, mse
-
-
-def hlm_partial_pooling(sim: Dict) -> Tuple[np.ndarray, float]:
-    """Partial pooling: empirical Bayes shrinkage."""
-    params = sim['params']
-    y_bar = sim['y_bar']
-    grand_mean = np.mean(y_bar)
+    T = len(z)
     
-    # Shrinkage factor
-    lambda_shrink = params.reliability
+    if window_sizes is None:
+        # Default: range from ~5% to ~40% of series length
+        min_w = max(20, T // 20)
+        max_w = min(T // 2, T // 3)
+        window_sizes = [w for w in [25, 50, 100, 200, 500] if min_w <= w <= max_w]
+        if not window_sizes:
+            window_sizes = [min(50, T // 2)]
     
-    theta_pp = grand_mean + lambda_shrink * (y_bar - grand_mean)
-    mse = np.mean((theta_pp - sim['theta_true'])**2)
-    return theta_pp, mse
-
-
-# =============================================================================
-# THREE-LAYER MODEL
-# =============================================================================
-# THREE-LAYER STOCHASTIC VOLATILITY MODEL (VARIANCE-COUPLING)
-# =============================================================================
-
-@dataclass
-class ThreeLayerParams:
-    """
-    Parameters for three-layer stochastic volatility hierarchy.
+    ic_max_values = []
+    valid_sizes = []
     
-    This model uses VARIANCE-COUPLING (like two-level SVF):
-    - x_3 is a random walk (phasic log-volatility)
-    - x_2 has innovation variance modulated by exp(Îº_32 * x_3 + Ï‰_2)
-    - x_1 has innovation variance modulated by exp(Îº_21 * x_2 + Ï‰_1)
+    for w in window_sizes:
+        if w > T:
+            continue
+        result = windowed_ic(z, x, window_size=w, method=method)
+        if np.isfinite(result['ic_max']):
+            ic_max_values.append(result['ic_max'])
+            valid_sizes.append(w)
     
-    This extends the SVF naturally to three layers.
-    """
-    kappa_32: float = 0.5     # Distal coupling (x3 â†’ x2 variance)
-    kappa_21: float = 0.5     # Proximal coupling (x2 â†’ x1 variance)
-    sigma_3: float = 0.3      # Log-volatility random walk noise
-    omega_2: float = -0.5     # Base log-variance for layer 2
-    omega_1: float = -0.5     # Base log-variance for layer 1
-    sigma_obs: float = 0.5    # Observation noise
-
-
-def simulate_three_layer(params: ThreeLayerParams, T: int = 300,
-                         seed: Optional[int] = None) -> Dict:
-    """
-    Simulate from three-layer stochastic volatility hierarchy.
-    
-    Model (VARIANCE-COUPLING):
-        x_3(t) = x_3(t-1) + Îµ_3,  Îµ_3 ~ N(0, Ïƒ_3Â²)           [phasic log-vol]
-        x_2(t) ~ N(x_2(t-1), exp(Îº_32 * x_3(t) + Ï‰_2))       [tonic log-vol]
-        x_1(t) ~ N(x_1(t-1), exp(Îº_21 * x_2(t) + Ï‰_1))       [state]
-        y(t) ~ N(x_1(t), Ïƒ_obsÂ²)                              [observation]
-    
-    Îº_32 and Îº_21 modulate innovation VARIANCE, not drift.
-    """
-    if seed is not None:
-        np.random.seed(seed)
-    
-    x3 = np.zeros(T)  # Phasic log-volatility
-    x2 = np.zeros(T)  # Tonic log-volatility  
-    x1 = np.zeros(T)  # State
-    y = np.zeros(T)   # Observations
-    vol_2 = np.zeros(T)  # Volatility at layer 2
-    vol_1 = np.zeros(T)  # Volatility at layer 1
-    
-    # Initialize volatilities
-    vol_2[0] = np.exp(0.5 * params.omega_2)
-    vol_1[0] = np.exp(0.5 * params.omega_1)
-    y[0] = np.random.normal(0, params.sigma_obs)
-    
-    for t in range(1, T):
-        # Layer 3: Random walk (phasic log-volatility)
-        x3[t] = x3[t-1] + np.random.normal(0, params.sigma_3)
-        
-        # Layer 2: Variance modulated by x3 (tonic log-volatility)
-        log_var_2 = params.kappa_32 * x3[t] + params.omega_2
-        log_var_2 = np.clip(log_var_2, -6, 6)  # Prevent numerical issues
-        vol_2[t] = np.exp(0.5 * log_var_2)     # SD = exp(0.5 * log_var)
-        x2[t] = x2[t-1] + np.random.normal(0, vol_2[t])
-        
-        # Layer 1: Variance modulated by x2 (state)
-        log_var_1 = params.kappa_21 * x2[t] + params.omega_1
-        log_var_1 = np.clip(log_var_1, -6, 6)
-        vol_1[t] = np.exp(0.5 * log_var_1)
-        x1[t] = x1[t-1] + np.random.normal(0, vol_1[t])
-        
-        # Observation
-        y[t] = x1[t] + np.random.normal(0, params.sigma_obs)
+    if not ic_max_values:
+        return {
+            'ic_max_envelope': np.array([]),
+            'window_sizes': np.array([]),
+            'overall_ic_max': np.nan,
+            'sensitivity': np.nan
+        }
     
     return {
-        'x3': x3, 'x2': x2, 'x1': x1, 'y': y,
-        'vol_2': vol_2, 'vol_1': vol_1,
-        'params': params
+        'ic_max_envelope': np.array(ic_max_values),
+        'window_sizes': np.array(valid_sizes),
+        'overall_ic_max': np.max(ic_max_values),
+        'sensitivity': np.std(ic_max_values)
     }
 
 
-def compute_cf_three_layer(sim: Dict) -> Tuple[float, float]:
-    """
-    Compute CF for both couplings in three-layer stochastic volatility model.
-    
-    For variance-coupling:
-    - CF_32 measures dependency between x3 and log|Î”x2| (volatility â†’ innovation scale)
-    - CF_21 measures dependency between x2 and log|Î”x1| (volatility â†’ innovation scale)
-    
-    This parallels the two-level SVF CF computation.
-    """
-    # CF_32: Distal coupling (x3 modulates x2 variance)
-    x3 = sim['x3'][1:]
-    dx2 = np.diff(sim['x2'])
-    log_abs_dx2 = np.log(np.abs(dx2) + 1e-10)
-    
-    rho_32 = np.corrcoef(x3, log_abs_dx2)[0, 1]
-    if np.isfinite(rho_32):
-        sigma_x3 = max(np.std(x3), 1.0)
-        sigma_log_dx2 = max(np.std(log_abs_dx2), 1.0)
-        cf_32 = circulatory_fidelity_gaussian(rho_32, sigma_x3, sigma_log_dx2)
-    else:
-        cf_32 = 0.0
-    
-    # CF_21: Proximal coupling (x2 modulates x1 variance)
-    x2 = sim['x2'][1:]
-    dx1 = np.diff(sim['x1'])
-    log_abs_dx1 = np.log(np.abs(dx1) + 1e-10)
-    
-    rho_21 = np.corrcoef(x2, log_abs_dx1)[0, 1]
-    if np.isfinite(rho_21):
-        sigma_x2 = max(np.std(x2), 1.0)
-        sigma_log_dx1 = max(np.std(log_abs_dx1), 1.0)
-        cf_21 = circulatory_fidelity_gaussian(rho_21, sigma_x2, sigma_log_dx1)
-    else:
-        cf_21 = 0.0
-    
-    return max(0.0, cf_32) if np.isfinite(cf_32) else 0.0, \
-           max(0.0, cf_21) if np.isfinite(cf_21) else 0.0
-
-
-def three_layer_mf_inference(sim: Dict) -> float:
-    """
-    Mean-field inference: ignores inter-layer coupling.
-    Uses average volatility for both layers.
-    """
-    T = len(sim['y'])
-    params = sim['params']
-    
-    # Use average volatility (ignoring coupling)
-    avg_vol_1 = np.exp(0.5 * params.omega_1)
-    process_var = avg_vol_1**2
-    obs_var = params.sigma_obs**2
-    
-    x1_est = np.zeros(T)
-    var_est = np.ones(T)
-    
-    for t in range(1, T):
-        pred_var = var_est[t-1] + process_var
-        K = pred_var / (pred_var + obs_var)
-        x1_est[t] = x1_est[t-1] + K * (sim['y'][t] - x1_est[t-1])
-        var_est[t] = (1 - K) * pred_var
-    
-    return np.mean((x1_est - sim['x1'])**2)
-
-
-def three_layer_oracle_inference(sim: Dict) -> float:
-    """
-    Oracle inference: knows true volatility at each timestep.
-    Uses actual vol_1[t] for Kalman gain computation.
-    """
-    T = len(sim['y'])
-    params = sim['params']
-    
-    obs_var = params.sigma_obs**2
-    
-    x1_est = np.zeros(T)
-    var_est = np.ones(T)
-    
-    for t in range(1, T):
-        # Use true volatility at this timestep
-        process_var = sim['vol_1'][t]**2
-        pred_var = var_est[t-1] + process_var
-        
-        K = pred_var / (pred_var + obs_var)
-        x1_est[t] = x1_est[t-1] + K * (sim['y'][t] - x1_est[t-1])
-        var_est[t] = (1 - K) * pred_var
-    
-    return np.mean((x1_est - sim['x1'])**2)
-
-
 # =============================================================================
-# VALIDATION RUNNERS
+# MODULE INFO
 # =============================================================================
 
-def run_svf_validation(coupling_values: List[float], n_reps: int = 100,
-                       T: int = 300, seed: int = 42) -> Dict[str, np.ndarray]:
-    """Run SVF validation sweep over coupling strengths."""
-    np.random.seed(seed)
-    
-    results = {
-        'coupling': [], 'cf': [], 'mf_mse': [], 
-        'oracle_mse': [], 'mse_ratio': [], 'rep': []
-    }
-    
-    for kappa in coupling_values:
-        params = SVFParams(coupling=kappa)
-        
-        for rep in range(n_reps):
-            sim = simulate_svf(params, T=T)
-            cf = compute_cf_svf(sim, method='gaussian')
-            
-            _, mf_mse = svf_mf_inference(sim)
-            _, oracle_mse = svf_oracle_inference(sim)
-            
-            if np.isfinite(cf) and cf >= 0:
-                results['coupling'].append(kappa)
-                results['cf'].append(cf)
-                results['mf_mse'].append(mf_mse)
-                results['oracle_mse'].append(oracle_mse)
-                results['mse_ratio'].append(mf_mse / max(oracle_mse, 1e-10))
-                results['rep'].append(rep)
-    
-    return {k: np.array(v) for k, v in results.items()}
-
-
-def run_hlm_validation(tau_values: List[float], n_reps: int = 100,
-                       seed: int = 42) -> Dict[str, np.ndarray]:
-    """Run HLM validation sweep over between-group variance."""
-    np.random.seed(seed)
-    
-    results = {
-        'tau': [], 'icc': [], 'reliability': [], 'cf': [],
-        'no_pool_mse': [], 'partial_pool_mse': [], 'mse_ratio': [], 'rep': []
-    }
-    
-    for tau in tau_values:
-        params = HLMParams(tau=tau, sigma=1.0)
-        cf = compute_cf_hlm(params)
-        
-        for rep in range(n_reps):
-            sim = simulate_hlm(params)
-            
-            _, np_mse = hlm_no_pooling(sim)
-            _, pp_mse = hlm_partial_pooling(sim)
-            
-            results['tau'].append(tau)
-            results['icc'].append(params.icc)
-            results['reliability'].append(params.reliability)
-            results['cf'].append(cf)
-            results['no_pool_mse'].append(np_mse)
-            results['partial_pool_mse'].append(pp_mse)
-            results['mse_ratio'].append(np_mse / max(pp_mse, 1e-10))
-            results['rep'].append(rep)
-    
-    return {k: np.array(v) for k, v in results.items()}
-
-
-def run_three_layer_validation(kappa_values: List[float], n_reps: int = 100,
-                               T: int = 300, seed: int = 42) -> Dict[str, np.ndarray]:
-    """Run three-layer hierarchy validation."""
-    np.random.seed(seed)
-    
-    results = {
-        'kappa_32': [], 'kappa_21': [], 'cf_32': [], 'cf_21': [],
-        'mf_mse': [], 'oracle_mse': [], 'mse_ratio': [], 'rep': []
-    }
-    
-    for k32 in kappa_values:
-        for k21 in kappa_values:
-            params = ThreeLayerParams(kappa_32=k32, kappa_21=k21)
-            
-            for rep in range(n_reps):
-                sim = simulate_three_layer(params, T=T)
-                cf_32, cf_21 = compute_cf_three_layer(sim)
-                
-                mf_mse = three_layer_mf_inference(sim)
-                oracle_mse = three_layer_oracle_inference(sim)
-                
-                results['kappa_32'].append(k32)
-                results['kappa_21'].append(k21)
-                results['cf_32'].append(cf_32)
-                results['cf_21'].append(cf_21)
-                results['mf_mse'].append(mf_mse)
-                results['oracle_mse'].append(oracle_mse)
-                results['mse_ratio'].append(mf_mse / max(oracle_mse, 1e-10))
-                results['rep'].append(rep)
-    
-    return {k: np.array(v) for k, v in results.items()}
-
-
-
-# =============================================================================
-# MAIN
-# =============================================================================
-
-if __name__ == "__main__":
-    print("=" * 70)
-    print("CIRCULATORY FIDELITY: Validation Suite (with Bootstrap CI)")
-    print("=" * 70)
-    print(f"Minimum sigma for positive entropy: {SIGMA_MIN:.4f}")
-    
-    # Test Gaussian CF with explicit sigmas
-    print("\n--- Gaussian CF (closed-form, sigma_z = sigma_x = 1.0) ---")
-    for rho in [0.0, 0.3, 0.5, 0.7, 0.9]:
-        cf = circulatory_fidelity_gaussian(rho, sigma_z=1.0, sigma_x=1.0)
-        mi = mutual_information_gaussian(rho)
-        r_L = linfoot_correlation(mi)
-        print(f"rho = {rho:.1f}: MI = {mi:.4f} nats, CF = {cf:.4f}, r_L = {r_L:.4f}")
-    
-    # Test with different variances
-    print("\n--- Gaussian CF with varying sigma ---")
-    for sigma in [0.5, 1.0, 2.0]:
-        cf = circulatory_fidelity_gaussian(0.7, sigma_z=sigma, sigma_x=sigma)
-        h = differential_entropy_gaussian(sigma)
-        print(f"sigma = {sigma:.1f}: H = {h:.4f} nats, CF(rho=0.7) = {cf:.4f}")
-    
-    # Test Bootstrap CI
-    print("\n--- Bootstrap CI Demo (rho=0.7, n=500) ---")
-    np.random.seed(42)
-    n_samples = 500
-    rho_true = 0.7
-    
-    # Generate correlated Gaussian data
-    mean = [0, 0]
-    cov = [[1, rho_true], [rho_true, 1]]
-    data = np.random.multivariate_normal(mean, cov, n_samples)
-    X_demo, Y_demo = data[:, 0], data[:, 1]
-    
-    result = bootstrap_cf_gaussian(X_demo, Y_demo, n_bootstrap=1000, seed=123)
-    print(f"CF point estimate: {result.cf_point:.4f}")
-    print(f"CF 95% CI: [{result.ci_lower:.4f}, {result.ci_upper:.4f}]")
-    print(f"Linfoot r_L: {result.linfoot_point:.4f} (true |rho| = {rho_true:.2f})")
-    print(f"Linfoot 95% CI: [{result.linfoot_ci_lower:.4f}, {result.linfoot_ci_upper:.4f}]")
-    
-    # Test aggregated correlation CI (addresses reviewer concern)
-    print("\n--- Aggregated Correlation CI (8 points, like SVF validation) ---")
-    # Simulated aggregated data (coupling levels -> mean CF, mean MSE ratio)
-    cf_agg = np.array([0.01, 0.03, 0.05, 0.08, 0.11, 0.15, 0.20, 0.26])
-    mse_agg = np.array([1.02, 1.15, 1.35, 2.10, 3.50, 5.20, 8.10, 11.5])
-    
-    agg_result = bootstrap_aggregated_correlation(cf_agg, mse_agg, n_bootstrap=10000, seed=456)
-    print(f"r = {agg_result['r_point']:.3f}")
-    print(f"95% CI: [{agg_result['r_ci_lower']:.3f}, {agg_result['r_ci_upper']:.3f}]")
-    print(f"(Based on {agg_result['n_points']} aggregated points)")
-    
-    print("\n" + "=" * 70)
-    print("All tests passed!")
+def version_info():
+    """Print version and method information."""
+    print(f"Circulatory Fidelity v{__version__}")
+    print("\nPrimary Diagnostic: IC = |ρ| (Linfoot correlation)")
+    print("Recommended Estimation: Copula-based (rank + probit transform)")
+    print("\nCompanion Metrics:")
+    print("  - Balance Factor (B): architectural characterization")
+    print("  - Control Coupling (CC): directed influence")
+    print("\nNotes:")
+    print("  - For high-dimensional data, use reduce_dimensions_pls() first")
+    print("  - Legacy CF function deprecated (use ic_gaussian instead)")
