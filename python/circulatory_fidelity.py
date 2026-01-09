@@ -13,6 +13,15 @@ For non-Gaussian distributions, copula-based estimation is provided:
     3. Compute Pearson correlation of transformed variables
     4. Convert to Linfoot correlation: IC = sqrt(1 - exp(-2*MI))
 
+INPUT HANDLING:
+    All functions accept various array-like inputs:
+    - NumPy arrays (any numeric dtype)
+    - Python lists
+    - PyTorch tensors (automatically converted via .detach().cpu().numpy())
+    - TensorFlow tensors
+    - JAX arrays
+    All inputs are automatically converted to float64 for numerical stability.
+
 COMPANION METRICS:
     - Balance Factor (B): sqrt(σ_min² / σ_max²) - architectural characterization
     - Control Coupling (CC): directed influence measure
@@ -39,7 +48,97 @@ from dataclasses import dataclass
 from typing import Tuple, Optional, Dict, List, Union
 import warnings
 
-__version__ = "1.1.0"
+__version__ = "1.1.1"
+
+# =============================================================================
+# INPUT HANDLING UTILITIES
+# =============================================================================
+
+def _to_numpy_float64(x) -> np.ndarray:
+    """
+    Convert input to numpy float64 array, handling various input types.
+    
+    Supports: numpy arrays, lists, PyTorch tensors, TensorFlow tensors,
+    JAX arrays, and other array-like objects.
+    
+    Parameters
+    ----------
+    x : array-like
+        Input data (numpy array, list, torch tensor, etc.)
+    
+    Returns
+    -------
+    np.ndarray
+        Numpy array with float64 dtype
+    """
+    # Handle PyTorch tensors
+    if hasattr(x, 'detach') and hasattr(x, 'cpu') and hasattr(x, 'numpy'):
+        # PyTorch tensor
+        try:
+            x = x.detach().cpu().numpy()
+        except Exception:
+            # Fallback for edge cases
+            x = np.array(x.tolist())
+    
+    # Handle TensorFlow tensors
+    elif hasattr(x, 'numpy') and hasattr(x, 'device'):
+        try:
+            x = x.numpy()
+        except Exception:
+            x = np.array(x)
+    
+    # Handle JAX arrays
+    elif type(x).__module__.startswith('jax'):
+        x = np.array(x)
+    
+    # Convert to numpy array
+    x = np.asarray(x)
+    
+    # Convert to float64 for numerical stability
+    if not np.issubdtype(x.dtype, np.floating):
+        x = x.astype(np.float64)
+    elif x.dtype != np.float64:
+        x = x.astype(np.float64)
+    
+    return x
+
+
+def _validate_inputs(x: np.ndarray, y: np.ndarray, min_samples: int = 4) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Validate and prepare inputs for IC computation.
+    
+    Parameters
+    ----------
+    x, y : np.ndarray
+        Input arrays
+    min_samples : int
+        Minimum required samples
+    
+    Returns
+    -------
+    x, y : np.ndarray
+        Validated and flattened arrays
+    
+    Raises
+    ------
+    ValueError
+        If inputs are invalid
+    """
+    x = _to_numpy_float64(x).flatten()
+    y = _to_numpy_float64(y).flatten()
+    
+    if len(x) != len(y):
+        raise ValueError(f"x and y must have the same length. Got {len(x)} and {len(y)}")
+    
+    if len(x) < min_samples:
+        raise ValueError(f"Need at least {min_samples} samples. Got {len(x)}")
+    
+    # Check for all-NaN
+    if np.all(~np.isfinite(x)) or np.all(~np.isfinite(y)):
+        raise ValueError("Input arrays contain only NaN/Inf values")
+    
+    return x, y
+
 
 # =============================================================================
 # PRIMARY DIAGNOSTIC: INFERENCE COUPLING (IC)
@@ -94,8 +193,9 @@ def inference_coupling(x: np.ndarray, y: np.ndarray, method: str = 'copula') -> 
     >>> print(f"IC = {ic:.3f} ± {se:.3f}")
     IC = 0.800 ± 0.019
     """
-    x = np.asarray(x).flatten()
-    y = np.asarray(y).flatten()
+    # Robust input conversion (handles PyTorch, TensorFlow, JAX, etc.)
+    x = _to_numpy_float64(x).flatten()
+    y = _to_numpy_float64(y).flatten()
     
     if len(x) != len(y):
         raise ValueError("x and y must have the same length")
@@ -143,6 +243,21 @@ def _ic_copula(x: np.ndarray, y: np.ndarray) -> Tuple[float, float]:
     """
     n = len(x)
     
+    # Handle NaN/Inf by filtering
+    valid_mask = np.isfinite(x) & np.isfinite(y)
+    if not np.all(valid_mask):
+        warnings.warn(f"Removing {np.sum(~valid_mask)} non-finite values from input")
+        x = x[valid_mask]
+        y = y[valid_mask]
+        n = len(x)
+        if n < 4:
+            return np.nan, np.nan
+    
+    # Check for constant arrays (zero variance)
+    if np.std(x) < 1e-10 or np.std(y) < 1e-10:
+        warnings.warn("Input array is constant or near-constant; IC is undefined")
+        return np.nan, np.nan
+    
     # Step 1: Rank transform to uniform marginals
     # Use (rank - 0.5) / n to avoid boundary issues
     u = (rankdata(x) - 0.5) / n
@@ -153,7 +268,17 @@ def _ic_copula(x: np.ndarray, y: np.ndarray) -> Tuple[float, float]:
     z_y = norm.ppf(v)
     
     # Step 3: Compute Pearson correlation of transformed variables
-    rho, _ = pearsonr(z_x, z_y)
+    # Handle potential warnings from constant arrays
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        try:
+            rho, _ = pearsonr(z_x, z_y)
+        except Exception:
+            return np.nan, np.nan
+    
+    # Handle NaN from pearsonr
+    if not np.isfinite(rho):
+        return np.nan, np.nan
     
     # Step 4: Convert to Linfoot correlation
     # For Gaussians: MI = -0.5 * log(1 - rho^2)
@@ -163,7 +288,7 @@ def _ic_copula(x: np.ndarray, y: np.ndarray) -> Tuple[float, float]:
     # Fisher transform standard error
     se = 1.0 / np.sqrt(n - 3) if n > 3 else np.nan
     
-    return ic, se
+    return float(ic), float(se)
 
 
 def _bootstrap_se(x: np.ndarray, y: np.ndarray, n_bootstrap: int = 100) -> float:
@@ -290,8 +415,12 @@ def check_nonmonotonic_dependence(x: np.ndarray, y: np.ndarray,
     >>> if result['nonmonotonic_flag']:
     ...     print("WARNING: Non-monotonic dependence detected!")
     """
-    x = np.asarray(x).flatten()
-    y = np.asarray(y).flatten()
+    # Robust input conversion
+    x = _to_numpy_float64(x).flatten()
+    y = _to_numpy_float64(y).flatten()
+    
+    if len(x) != len(y):
+        raise ValueError(f"x and y must have the same length. Got {len(x)} and {len(y)}")
     
     # Standard linear IC
     ic_linear, _ = _ic_copula(x, y)
@@ -433,6 +562,10 @@ def mutual_information_ksg(X: np.ndarray, Y: np.ndarray, k: int = 5) -> float:
     float
         Estimated mutual information in nats (non-negative)
     """
+    # Ensure numpy arrays with float64 dtype
+    X = _to_numpy_float64(X)
+    Y = _to_numpy_float64(Y)
+    
     X = np.atleast_2d(X)
     Y = np.atleast_2d(Y)
     
@@ -448,6 +581,17 @@ def mutual_information_ksg(X: np.ndarray, Y: np.ndarray, k: int = 5) -> float:
     if n <= k:
         raise ValueError(f"Need more samples than k. Got n={n}, k={k}")
     
+    # Check for NaN/Inf
+    if np.any(~np.isfinite(X)) or np.any(~np.isfinite(Y)):
+        warnings.warn("Input contains NaN or Inf values. Results may be unreliable.")
+        # Remove rows with NaN/Inf
+        valid_mask = np.all(np.isfinite(X), axis=1) & np.all(np.isfinite(Y), axis=1)
+        if np.sum(valid_mask) <= k:
+            return np.nan
+        X = X[valid_mask]
+        Y = Y[valid_mask]
+        n = X.shape[0]
+    
     XY = np.hstack([X, Y])
     
     tree_xy = cKDTree(XY)
@@ -458,13 +602,16 @@ def mutual_information_ksg(X: np.ndarray, Y: np.ndarray, k: int = 5) -> float:
     eps = distances[:, -1]
     eps = np.maximum(eps, 1e-10)
     
-    n_x = np.array([tree_x.query_ball_point(X[i], r=eps[i], p=float('inf')) 
-                    for i in range(n)])
-    n_y = np.array([tree_y.query_ball_point(Y[i], r=eps[i], p=float('inf')) 
-                    for i in range(n)])
+    # Compute neighbor counts directly without creating ragged arrays
+    # This fixes compatibility with newer NumPy versions
+    n_x = np.array([len(tree_x.query_ball_point(X[i], r=eps[i], p=float('inf'))) - 1 
+                    for i in range(n)], dtype=np.float64)
+    n_y = np.array([len(tree_y.query_ball_point(Y[i], r=eps[i], p=float('inf'))) - 1 
+                    for i in range(n)], dtype=np.float64)
     
-    n_x = np.array([len(nx) - 1 for nx in n_x])
-    n_y = np.array([len(ny) - 1 for ny in n_y])
+    # Ensure minimum count of 1 to avoid log(0)
+    n_x = np.maximum(n_x, 1)
+    n_y = np.maximum(n_y, 1)
     
     mi = digamma(k) + digamma(n) - np.mean(digamma(n_x + 1) + digamma(n_y + 1))
     
@@ -616,6 +763,10 @@ def diagnose(x: np.ndarray, y: np.ndarray,
     >>> print(result)
     ICDiagnostic(ic=0.450 ± 0.032, method='copula', recommendation='Use structured VI')
     """
+    # Robust input conversion
+    x = _to_numpy_float64(x).flatten()
+    y = _to_numpy_float64(y).flatten()
+    
     ic, se = inference_coupling(x, y, method=method)
     n = len(x)
     
@@ -757,6 +908,10 @@ def reduce_dimensions_pls(X: np.ndarray, Y: np.ndarray, n_components: int = 1,
         from sklearn.model_selection import cross_val_score
     except ImportError:
         raise ImportError("sklearn required for PLS. Install with: pip install scikit-learn")
+    
+    # Robust input conversion
+    X = _to_numpy_float64(X)
+    Y = _to_numpy_float64(Y)
     
     X = np.atleast_2d(X)
     Y = np.atleast_2d(Y)
@@ -906,8 +1061,9 @@ def windowed_ic(
     MIN_WINDOW_SIZE = 30  # Minimum for stable correlation estimates
     RECOMMENDED_WINDOW_SIZE = 50
     
-    z = np.asarray(z).flatten()
-    x = np.asarray(x).flatten()
+    # Robust input conversion
+    z = _to_numpy_float64(z).flatten()
+    x = _to_numpy_float64(x).flatten()
     T = len(z)
     
     if len(x) != T:
