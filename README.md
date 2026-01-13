@@ -295,7 +295,7 @@ For three-layer hierarchies with fully factorized MFVI:
 
 ## Version History
 
-### v1.1.0 (January 2026) — Current Release
+### v1.1.0 (January 13, 2026) — Current Release
 
 **Major theoretical restructuring** to ensure proper attribution and academic rigor:
 
@@ -316,7 +316,7 @@ For three-layer hierarchies with fully factorized MFVI:
 
 ---
 
-### v1.0.0 (December 2024) — Initial Release
+### v1.0.0 (January 1, 2026) — Initial Release
 
 - Original formulation: CF = I(Z;X) / min(H(Z), H(X))
 - Entropy-normalized mutual information approach
