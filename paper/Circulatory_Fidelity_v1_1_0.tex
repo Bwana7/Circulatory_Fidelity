@@ -110,11 +110,11 @@
 \begin{abstract}
 While Mean-Field Variational Inference (MFVI) enables scalable Bayesian computation, its independence assumption systematically severs the relational coupling required for accurate posterior estimation, often leading to silent failure. This paper introduces \emph{Circulatory Fidelity}, a pre-inference diagnostic framework grounded in the precision matrix decomposition $\Lambda = D + R$, which quantifies the information-theoretic cost of discarding relational structure ($R$) before computational resources are committed.
 
-In this decomposition, $D$ (diagonal) captures \emph{nodal} structure and $R$ (off-diagonal) captures \emph{relational} structure. MFVI keeps $D$ but discards $R$. The \textbf{Relational Invariance Theorem} proves that for Gaussian systems, mutual information $I(Z;X) = -\frac{1}{2}\log(1-\rho^2)$ depends \emph{only} on correlation $\rho$---not on marginal variances $\sigma_z^2$ or $\sigma_x^2$. This yields \textbf{Inference Coupling} $\IC = |\rho|$ as the primary pre-inference diagnostic. The companion \textbf{Balance Factor} $\BB$ characterizes architectural symmetry but adds no predictive value for MFVI failure ($\Delta R^2 \approx 0$). \textbf{Control Coupling} $\CC = |\rho| \cdot (\sigma_i/\sigma_j)$ captures directional intervention leverage, where scale \emph{does} matter---this is where the ``bottleneck'' principle applies.
+In this decomposition, $D$ (diagonal) captures \emph{nodal} structure and $R$ (off-diagonal) captures \emph{relational} structure. MFVI keeps $D$ but discards $R$. Building on the classical result that Gaussian mutual information $I(Z;X) = -\frac{1}{2}\log(1-\rho^2)$ depends \emph{only} on correlation $\rho$---not on marginal variances \citep{gelfand1959calculation,cover2006elements}---we develop \textbf{Inference Coupling} $\IC = |\rho|$ as a pre-inference diagnostic. The companion \textbf{Balance Factor} $\BB$ characterizes architectural symmetry but adds no predictive value for MFVI failure ($\Delta R^2 \approx 0$), empirically confirming the theoretical invariance. \textbf{Control Coupling} $\CC = |\rho| \cdot (\sigma_i/\sigma_j)$ captures directional intervention leverage, where scale \emph{does} matter---this is where the ``bottleneck'' principle applies.
 
-We establish four additional contributions: (1) The \textbf{Computational Synergy Principle}---for discrete Boolean functions, synergistic dependencies arise when the generative function is affine over $\text{GF}(2)$, enabling a two-stage diagnostic where pairwise $\IC \approx 0$ combined with interaction $\IC > 0$ identifies XOR-type structure (with the formal equivalence holding exactly in the Boolean uniform-input case). (2) The \textbf{Dependency Asymmetry}---high IC predicts MFVI failure in filtering models but hierarchy redundancy in pooling models, resolved by distinguishing constitutive from inductive coupling. (3) The \textbf{Proximal Dominance Principle}---in deep hierarchies with fully factorized mean-field approximations, proximal coupling causes up to $40\times$ degradation when severed while distal coupling causes exactly $1.0\times$ when severed if the proximal layer is also severed (mathematically guaranteed); however, distal coupling amplifies proximal failure by $1.01$--$2.26\times$ when both are present ($N = 16{,}000$). (4) The \textbf{Maximal Coupling Rule}---for non-stationary series, MFVI suitability depends on $\IC_{\max}$, not global average.
+We establish three novel theoretical contributions and one formalization: (1) The \textbf{Computational Synergy Principle}---synergistic dependencies arise when the generative function is affine over $\text{GF}(2)$, connecting Siegenthaler's correlation immunity from cryptography to information-theoretic synergy, and enabling a two-stage diagnostic where pairwise $\IC \approx 0$ combined with interaction $\IC > 0$ identifies XOR-type structure. (2) The \textbf{Dependency Asymmetry}---high IC predicts MFVI failure in filtering models but hierarchy redundancy in pooling models, resolved by a novel taxonomy distinguishing constitutive from inductive coupling. (3) The \textbf{Proximal Dominance Principle}---formalizing documented observations that proximal layers dominate in hierarchical models, we prove this reduces MFVI diagnostic complexity from $O(L^2)$ to $O(1)$; proximal coupling causes up to $40\times$ degradation while distal coupling causes exactly $1.0\times$ (mathematically guaranteed). (4) The \textbf{Maximal Coupling Rule}---for non-stationary series, MFVI suitability depends on $\IC_{\max}$, not global average.
 
-Validation spans stochastic volatility filters ($r = 0.86$ for log-likelihood gap, $N = 8{,}000$), hierarchical linear models, and three-layer hierarchies ($N = 32{,}000$+ total), yielding a practical pre-inference workflow. The relational theory clarifies a fundamental asymmetry: \emph{what you can learn} from a relationship (inference) depends only on coupling strength, while \emph{what you can do} through a relationship (control) depends on both coupling and scale.
+Validation spans stochastic volatility filters ($r = 0.86$ for log-likelihood gap, $N = 8{,}000$), hierarchical linear models, and three-layer hierarchies ($N = 32{,}000$+ total), yielding a practical pre-inference workflow. The framework clarifies a fundamental asymmetry: \emph{what you can learn} from a relationship (inference) depends only on coupling strength, while \emph{what you can do} through a relationship (control) depends on both coupling and scale.
 \end{abstract}
 
 %=============================================================================
@@ -141,7 +141,7 @@ We introduce \textbf{Circulatory Fidelity} (CF), a framework for pre-inference d
 
 \textbf{Inference Coupling (IC)} is the primary \emph{diagnostic metric} within this framework. For Gaussians: $\IC = |\rho|$.
 
-\textbf{Historical note:} The original v1.0 formulation defined $\text{CF} = I(Z;X)/\min(H(Z), H(X))$. The Relational Invariance Theorem (Theorem~\ref{thm:relational-invariance}) proves this normalization is unnecessary for Gaussian inference diagnostics---the marginal entropies cancel. The current formulation uses IC = $|\rho|$ as the primary diagnostic, equivalent to the Linfoot correlation.
+\textbf{Historical note:} The original v1.0 formulation defined $\text{CF} = I(Z;X)/\min(H(Z), H(X))$. The standard result that marginal variances cancel in Gaussian mutual information (Proposition~\ref{prop:gaussian-mi}) proves this normalization is unnecessary for inference diagnostics. The current formulation uses IC = $|\rho|$ as the primary diagnostic, equivalent to the Linfoot correlation.
 \end{tcolorbox}
 
 For a multivariate Gaussian with covariance $\Sigma$, the precision matrix $\Lambda = \Sigma^{-1}$ decomposes as:
@@ -151,7 +151,7 @@ For a multivariate Gaussian with covariance $\Sigma$, the precision matrix $\Lam
 \end{equation}
 where $D = \text{diag}(\Lambda)$ captures nodal structure and $R = \Lambda - D$ captures relational structure. Mean-field variational inference \emph{keeps} $D$ but \emph{discards} $R$---a phenomenon rigorously characterized by \citet{giordano2018covariances}, who proved that MFVI systematically underestimates posterior covariances. IC provides a pre-inference metric that predicts when this covariance underestimation will be fatal: high IC indicates that the discarded relational structure $R$ contains information essential for accurate posterior approximation. The fundamental question becomes: how much does discarding $R$ cost?
 
-We prove (Theorem~\ref{thm:relational-invariance}) that for Gaussian systems, the mutual information---and hence the KL cost of mean-field factorization---is:
+A classical result (Proposition~\ref{prop:gaussian-mi}) shows that for Gaussian systems, the mutual information---and hence the KL cost of mean-field factorization---is:
 \begin{equation}
 I(Z; X) = -\frac{1}{2}\log(1 - \rho^2)
 \end{equation}
@@ -173,22 +173,21 @@ For Gaussian systems, IC equals the absolute Pearson correlation. IC measures ex
 \end{itemize}
 The ``bottleneck'' principle---that the lower-capacity variable limits information transfer---applies to \emph{control}, not inference. For MFVI diagnostics, only IC matters.
 
-\paragraph{Contributions.} We present five theoretical contributions:
+\paragraph{Contributions.} This work synthesizes established results from information theory into a practical diagnostic framework, contributing three novel theoretical results and one novel formalization:
 \begin{enumerate}
-    \item \textbf{The Relational Theory:} We prove that inference quality depends only on relational structure (IC), not nodal structure (marginal variances). The Relational Invariance Theorem establishes that $I(Z;X) = -\frac{1}{2}\log(1-\rho^2)$ depends only on $\rho$. The Balance Factor $\BB$ characterizes architecture but adds $\Delta R^2 \approx 0$ for predicting MFVI failure. Control Coupling $\CC$ captures directional intervention leverage where scale \emph{does} matter. (Section~\ref{sec:definition})
-    \item \textbf{The Computational Synergy Principle and Two-Stage Protocol:} Synergy-generating functions are characterized algebraically as affine over $\text{GF}(2)$, connecting to Siegenthaler's correlation immunity. This equivalence enables a two-stage diagnostic: pairwise IC detects standard coupling, while $\IC_{\text{pairwise}} \approx 0$ combined with $\IC_{\text{interaction}} > 0$ positively identifies XOR-type structure (Theorem~\ref{thm:synergy}, Section~\ref{sec:synergy})
-    \item \textbf{The Dependency Asymmetry and Structural Taxonomy:} High IC predicts MFVI failure in filtering models (constitutive coupling) but hierarchy redundancy in pooling models (inductive coupling), resolved through a taxonomy distinguishing load-bearing from scaffolding dependencies (Section~\ref{sec:taxonomy})
-    \item \textbf{The Proximal Dominance Principle:} In deep hierarchies, proximal coupling drives up to $40\times$ degradation (95\% CI: 2.7--102) while distal coupling causes exactly $1.0\times$ (mathematically guaranteed). This implies that for $L$-layer models, only the proximal layer requires IC analysis, reducing diagnostic complexity from $O(L^2)$ to $O(1)$. For non-stationary time series, we derive the corollary \emph{Maximal Coupling Rule}: MFVI suitability is determined by $\IC_{\max}$, not global average (Sections~\ref{sec:deep},~\ref{sec:windowed})
-    \item \textbf{The Linfoot Equivalence:} For Gaussian systems, $\IC = r_L$ where $r_L = \sqrt{1 - \exp(-2I)}$ is the Linfoot informational correlation, providing a coordinate-invariant formulation that extends to non-Gaussian distributions (Section~\ref{sec:linfoot})
+    \item \textbf{The Computational Synergy Principle and Two-Stage Protocol:} We prove that synergy-generating functions are characterized algebraically as affine over $\text{GF}(2)$, establishing a novel connection between Siegenthaler's correlation immunity \citep{siegenthaler1984correlation} from cryptography and information-theoretic synergy \citep{williams2010nonnegative}. This equivalence enables a two-stage diagnostic: pairwise IC detects standard coupling, while $\IC_{\text{pairwise}} \approx 0$ combined with $\IC_{\text{interaction}} > 0$ positively identifies XOR-type structure (Theorem~\ref{thm:synergy}, Section~\ref{sec:synergy})
+    \item \textbf{The Dependency Asymmetry and Structural Taxonomy:} We identify that high IC predicts MFVI failure in filtering models but hierarchy redundancy in pooling models---an asymmetry not previously noted despite both phenomena being individually documented \citep{wang2004convergence,turner2011two}. We resolve this through a novel taxonomy distinguishing \emph{constitutive coupling} (load-bearing, as in state-space models) from \emph{inductive coupling} (scaffolding, as in hierarchical models) (Section~\ref{sec:taxonomy})
+    \item \textbf{The Proximal Dominance Principle:} We formalize the empirically documented observation \citep{havtorn2021hierarchical,sonderby2016ladder,zhao2017infovae} that proximal layers dominate in hierarchical models, proving that for MFVI diagnostics this reduces complexity from $O(L^2)$ to $O(1)$. Proximal coupling drives up to $40\times$ degradation (95\% CI: 2.7--102) while distal coupling causes exactly $1.0\times$ (mathematically guaranteed). For non-stationary time series, we derive the corollary \emph{Maximal Coupling Rule}: MFVI suitability is determined by $\IC_{\max}$, not global average (Sections~\ref{sec:deep},~\ref{sec:windowed})
+    \item \textbf{The Relational Diagnostic Framework:} Building on the standard result that Gaussian mutual information depends only on correlation \citep{gelfand1959calculation,cover2006elements}, we develop a diagnostic interpretation: MFVI failure depends on \emph{relational} structure (IC), not \emph{nodal} structure (marginal variances). The Balance Factor $\BB$ characterizes architecture but adds $\Delta R^2 \approx 0$ for predicting MFVI failure---an empirical confirmation of the theoretical invariance. Control Coupling $\CC$ captures directional intervention leverage where scale \emph{does} matter. (Section~\ref{sec:definition})
 \end{enumerate}
-These contributions are supported by empirical validation ($N = 32{,}000$+ simulations) and synthesized into a practical prior predictive workflow (Section~\ref{sec:workflow}).
+The framework connects IC to the Linfoot informational correlation \citep{linfoot1957informational}, inheriting its desirable properties: coordinate invariance, boundedness on $[0,1]$, and extension to non-Gaussian distributions (Section~\ref{sec:linfoot}). These contributions are supported by empirical validation ($N = 32{,}000$+ simulations) and synthesized into a practical prior predictive workflow (Section~\ref{sec:workflow}).
 
 \paragraph{Scope and Limitations.} IC operates on pairs of variables or variable groups. Mean-field variational inference can fail due to either (a) strong pairwise dependencies or (b) synergistic higher-order dependencies where information emerges only from joint configurations. The \emph{two-stage diagnostic protocol} addresses both failure modes: Stage 1 (pairwise IC) detects standard coupling; Stage 2 (interaction IC) detects synergistic structure. Critically, the signature of pairwise $\IC \approx 0$ combined with interaction $\IC > 0$ \emph{positively identifies} XOR-type algebraic structure through the Computational Synergy Principle (Theorem~\ref{thm:synergy}). This transforms synergy from a ``blind spot'' into a precisely detectable pattern. We formalize this protocol in Section~\ref{sec:synergy}.
 
 \paragraph{Paper organization.} We structure the exposition to build from diagnostic definition through theoretical foundations to practical application:
 \begin{itemize}
-    \item \textbf{Section~\ref{sec:definition}: The Relational Theory.} We establish the precision matrix foundation, define IC and companion metrics ($\BB$, $\CC$), prove the Relational Invariance Theorem, and connect IC to the Linfoot correlation.
-    \item \textbf{Section~\ref{sec:geometry}: Information-Geometric Interpretation.} We connect IC to KL projection cost on statistical manifolds, proving that IC determines the normalized KL gap for Gaussian posteriors.
+    \item \textbf{Section~\ref{sec:definition}: The Relational Diagnostic Framework.} We establish the precision matrix foundation, define IC and companion metrics ($\BB$, $\CC$), present the standard mutual information formula with its diagnostic interpretation, and connect IC to the Linfoot correlation.
+    \item \textbf{Section~\ref{sec:geometry}: Information-Geometric Interpretation.} We connect IC to KL projection cost on statistical manifolds, showing that IC determines the normalized KL gap for Gaussian posteriors.
     \item \textbf{Section~\ref{sec:risks}: Limitations and Extended Capabilities.} We address the curse of dimensionality (mandating supervised reduction via Partial Least Squares, PLS) and present the two-stage diagnostic protocol for detecting both pairwise coupling and synergistic algebraic structure.
     \item \textbf{Section~\ref{sec:unified}: Model Classification.} We resolve the Dependency Asymmetry by distinguishing filtering models (constitutive coupling) from pooling models (inductive coupling), establishing the interpretive framework for case studies.
     \item \textbf{Sections~\ref{sec:hgf}--\ref{sec:hlm}: Empirical Foundation.} Case studies on stochastic volatility filters and hierarchical linear models establish empirical validity across both model classes.
@@ -196,11 +195,11 @@ These contributions are supported by empirical validation ($N = 32{,}000$+ simul
     \item \textbf{Section~\ref{sec:deep}: Deep Hierarchies.} The Proximal Dominance Principle is demonstrated analytically (linear case) and empirically (three-layer SVF), with connections to posterior collapse in VAEs.
     \item \textbf{Section~\ref{sec:workflow}: Practical Workflow.} We synthesize findings into an actionable diagnostic protocol with derived thresholds.
 \end{itemize}
-\section{The Relational Theory}
+\section{The Relational Diagnostic Framework}
 \label{sec:definition}
 %=============================================================================
 
-This section establishes the theoretical foundation of Circulatory Fidelity: MFVI failure depends entirely on \emph{relational} structure (coupling between variables), not on \emph{nodal} structure (individual variable properties). This insight leads to Inference Coupling (IC) as the primary diagnostic, with companion metrics for architectural characterization and control analysis.
+This section establishes the theoretical foundation of Circulatory Fidelity: MFVI failure depends entirely on \emph{relational} structure (coupling between variables), not on \emph{nodal} structure (individual variable properties). This insight---grounded in classical information theory---leads to Inference Coupling (IC) as the primary diagnostic, with companion metrics for architectural characterization and control analysis.
 
 \subsection{The Precision Matrix Foundation}
 \label{sec:precision}
@@ -251,19 +250,19 @@ Inference Coupling measures the normalized magnitude of the relational structure
 \end{enumerate}
 \end{proposition}
 
-\subsection{The Relational Invariance Theorem}
+\subsection{The Relational Invariance Property}
 \label{sec:relational-invariance}
 
-The central theoretical result explains why IC, not entropy-normalized metrics, is the correct diagnostic for inference.
+The central result underlying IC comes from classical information theory: Gaussian mutual information depends only on correlation, not on marginal scales \citep{gelfand1959calculation,cover2006elements}.
 
-\begin{theorem}[Relational Invariance]
-\label{thm:relational-invariance}
+\begin{proposition}[Gaussian Mutual Information]
+\label{prop:gaussian-mi}
 For jointly Gaussian $(Z, X)$ with correlation $\rho$ and marginal standard deviations $\sigma_z, \sigma_x$:
 \begin{equation}
 I(Z; X) = -\frac{1}{2}\log(1 - \rho^2)
 \end{equation}
 The mutual information---and hence the KL cost of mean-field factorization---depends \emph{only} on $\rho$, not on $\sigma_z$ or $\sigma_x$.
-\end{theorem}
+\end{proposition}
 
 \begin{proof}
 For bivariate Gaussian:
@@ -273,8 +272,10 @@ I(Z; X) &= H(Z) + H(X) - H(Z, X) \\
 &= \frac{1}{2}\log(\sigma_z^2\sigma_x^2) - \frac{1}{2}\log(\sigma_z^2\sigma_x^2(1-\rho^2)) \\
 &= -\frac{1}{2}\log(1-\rho^2)
 \end{align}
-The marginal variances cancel completely.
+The marginal variances cancel completely. This calculation appears in standard texts \citep{cover2006elements}; we include it here to make the cancellation explicit.
 \end{proof}
+
+\paragraph{Diagnostic interpretation.} Though the formula itself is classical, its \emph{diagnostic implication} for variational inference has not been previously emphasized: any metric normalizing by marginal entropies adds no predictive value beyond $|\rho|$. The min-entropy normalization was conceptually motivated by a ``bottleneck'' intuition, but since the $\sigma$ terms cancel in mutual information, the bottleneck affects only what you can \emph{do} (control), not what you can \emph{learn} (inference). We term this the \textbf{relational invariance property}: inference depends on relational structure alone.
 
 \begin{corollary}[MSE Ratio Prediction]
 \label{cor:mse-ratio}
@@ -286,8 +287,6 @@ For Gaussian MFVI in filtering models, the mean squared error ratio is:
 \end{corollary}
 
 \noindent This establishes IC as a \emph{direct predictor} of MFVI quality degradation.
-
-\paragraph{Implication for diagnostics.} The Relational Invariance Theorem proves that any diagnostic normalizing by marginal entropies adds no predictive value beyond $|\rho|$. The min-entropy normalization was conceptually motivated by a ``bottleneck'' intuition, but since the $\sigma$ terms cancel in mutual information, the bottleneck affects only what you can \emph{do} (control), not what you can \emph{learn} (inference).
 
 \subsection{Companion Metrics: Balance Factor and Control Coupling}
 \label{sec:companion}
@@ -308,7 +307,7 @@ Properties:
     \item $\BB(r) = \BB(1/r)$ (symmetric in log-ratio)
 \end{itemize}
 
-\textbf{Critical empirical finding:} When added to IC in regression models predicting MSE ratio, $\BB$ contributes $\Delta R^2 \approx 0.00001$. The Balance Factor characterizes architecture but has \emph{no predictive value} for MFVI failure. This confirms the Relational Invariance Theorem empirically.
+\textbf{Critical empirical finding:} When added to IC in regression models predicting MSE ratio, $\BB$ contributes $\Delta R^2 \approx 0.00001$. The Balance Factor characterizes architecture but has \emph{no predictive value} for MFVI failure. This confirms the relational invariance property empirically.
 
 \begin{definition}[Control Coupling]
 Control Coupling measures directional intervention leverage:
@@ -353,7 +352,7 @@ The ``bottleneck'' intuition---that the lower-capacity variable limits informati
 \begin{figure}[!htbp]
 \centering
 \includegraphics[width=\textwidth]{fig02_bottleneck.pdf}
-\caption{\textbf{The bottleneck principle applies to control, not inference.} Information flows from $z$ (left reservoir) to $x$ (right reservoir) through a channel. The channel width is constrained by the lower-entropy variable---the bottleneck. \textbf{Key insight:} While this bottleneck affects \emph{control} leverage ($\CC$), it does \emph{not} affect what can be \emph{learned} from the relationship ($\IC$). The Relational Invariance Theorem proves that mutual information depends only on $\rho$, so inference quality under MFVI is determined by IC alone. The bottleneck metaphor correctly describes why $\CC(z \to x) \ll \CC(x \to z)$ when $\sigma_z \ll \sigma_x$, but this asymmetry does not affect MFVI failure prediction.}
+\caption{\textbf{The bottleneck principle applies to control, not inference.} Information flows from $z$ (left reservoir) to $x$ (right reservoir) through a channel. The channel width is constrained by the lower-entropy variable---the bottleneck. \textbf{Key insight:} While this bottleneck affects \emph{control} leverage ($\CC$), it does \emph{not} affect what can be \emph{learned} from the relationship ($\IC$). The relational invariance property shows that mutual information depends only on $\rho$, so inference quality under MFVI is determined by IC alone. The bottleneck metaphor correctly describes why $\CC(z \to x) \ll \CC(x \to z)$ when $\sigma_z \ll \sigma_x$, but this asymmetry does not affect MFVI failure prediction.}
 \label{fig:bottleneck}
 \end{figure}
 
@@ -389,16 +388,18 @@ $\CC$ (Control Coupling) & $|\rho| \cdot (\sigma_i/\sigma_j)$ & $[0, \infty)$ & 
 \label{fig:three-metrics}
 \end{figure}
 
-\subsection{The Linfoot Equivalence}
+\subsection{Connection to Linfoot Informational Correlation}
 \label{sec:linfoot}
 
-The \textbf{Linfoot informational correlation} \citep{linfoot1957informational} provides an information-theoretic formulation:
+IC inherits strong theoretical justification from the \textbf{Linfoot informational correlation} \citep{linfoot1957informational}, a dependence measure designed to satisfy Rényi's axioms:
 \begin{equation}
 r_L(z,x) = \sqrt{1 - \exp(-2 \cdot I(z;x))}
 \label{eq:linfoot}
 \end{equation}
 
-\begin{proposition}[Linfoot-IC Equivalence]
+A well-known property of the Linfoot correlation---established in the original 1957 paper---is that it equals $|\rho|$ for bivariate Gaussians:
+
+\begin{proposition}[Gaussian Linfoot Correlation {\citep{linfoot1957informational}}]
 \label{prop:linfoot-ic}
 For jointly Gaussian $(Z, X)$ with correlation $\rho$:
 \begin{equation}
@@ -416,9 +417,7 @@ Substitute $I = -\frac{1}{2}\log(1-\rho^2)$ into Equation~\ref{eq:linfoot}: $r_L
 \label{fig:linfoot}
 \end{figure}
 
-The Linfoot equivalence is significant: IC (derived from precision matrix structure) equals $r_L$ (derived from information theory) for Gaussian systems. This provides two independent justifications for the same diagnostic.
-
-\paragraph{Properties of Linfoot/$r_L$.}
+\paragraph{Significance for IC.} This established equivalence validates IC as a principled diagnostic: IC (derived from precision matrix structure) coincides with the Linfoot correlation (derived from information-theoretic axioms) for Gaussian systems. The connection provides IC with several desirable properties inherited from the Linfoot framework:
 \begin{enumerate}
     \item \textbf{Coordinate-invariance:} $r_L$ depends only on $I(z;x)$, which is invariant under invertible transformations
     \item \textbf{Boundedness:} $r_L \in [0, 1]$ for all distributions
@@ -540,7 +539,7 @@ For bivariate Gaussian $p(z,x)$ with correlation $\rho$ and mean-field approxima
 \end{equation}
 \end{proposition}
 
-This is a standard result. By the Relational Invariance Theorem (Section~\ref{sec:relational-invariance}), this projection cost depends \emph{only} on $\rho = \IC$---the marginal variances cancel completely. It follows that IC directly determines the information-geometric cost of mean-field factorization.
+This is a standard result. By the relational invariance property (Section~\ref{sec:relational-invariance}), this projection cost depends \emph{only} on $\rho = \IC$---the marginal variances cancel completely. It follows that IC directly determines the information-geometric cost of mean-field factorization.
 
 \begin{figure}[!htbp]
 \centering
@@ -606,7 +605,7 @@ By definition of mutual information:
 \begin{equation}
 I(Z; X) = D_{\text{KL}}(p(z,x) \| p(z)p(x))
 \end{equation}
-This is the KL divergence from the joint distribution to the product of marginals---precisely the KL gap $\Delta_{\text{KL}}$. By the Relational Invariance Theorem (Theorem~\ref{thm:relational-invariance}), this equals $-\frac{1}{2}\log(1-\rho^2)$ where $\rho = \IC$.
+This is the KL divergence from the joint distribution to the product of marginals---precisely the KL gap $\Delta_{\text{KL}}$. By the standard Gaussian mutual information formula (Proposition~\ref{prop:gaussian-mi}), this equals $-\frac{1}{2}\log(1-\rho^2)$ where $\rho = \IC$.
 \end{proof}
 
 \begin{remark}
@@ -633,7 +632,7 @@ The joint entropy is $H(Z, X) = \frac{1}{2}\log\left((2\pi e)^2 |\boldsymbol{\Si
 I(Z; X) &= H(Z) + H(X) - H(Z, X) \\
 &= \frac{1}{2}\log\left(\frac{(2\pi e)^2 \sigma_Z^2 \sigma_X^2}{(2\pi e)^2 \sigma_Z^2 \sigma_X^2 (1 - \rho^2)}\right) = -\frac{1}{2}\log(1 - \rho^2)
 \end{align}
-Note that the marginal variances $\sigma_Z^2$ and $\sigma_X^2$ cancel completely, confirming the Relational Invariance Theorem.
+Note that the marginal variances $\sigma_Z^2$ and $\sigma_X^2$ cancel completely, confirming the relational invariance property.
 \end{proof}
 
 \begin{corollary}[Linfoot-IC-KL Connection]
@@ -911,7 +910,7 @@ These examples illustrate why domain knowledge about combinatorial logic is esse
 
 This comparison empirically demonstrates the theorem's boundary: \textbf{IC detects Rule 30 but is completely blind to Rule 150}. The 240 non-affine rules all exhibit $\IC_2 > 0$ for at least one input pair; the 16 affine rules all exhibit $\IC_2 = 0$ for all pairs. The theorem's algebraic characterization exactly predicts this partition.
 
-This comparison reveals a counter-intuitive asymmetry: non-affine nonlinearities induce detectable marginal dependencies even in complex systems, whereas purely affine functions maintain marginal independence despite complete joint determination. Unstructured complexity is thus more amenable to standard diagnostics than structured synergy---the crystalline order of XOR-type computation evades detection precisely because of its algebraic perfection.
+This comparison reveals a counter-intuitive asymmetry: non-affine nonlinearities induce detectable marginal dependencies even in complex systems, whereas purely affine functions maintain marginal independence despite complete joint determination. We may characterize this as a \emph{fluid--crystalline} distinction in information topology: Rule~30's complexity is ``fluid''---the OR gate creates state-dependent edges where one input can render another irrelevant, allowing information to leak through porous logical structure. Rule~150's complexity is ``crystalline''---every input is always load-bearing, creating a rigid lattice where all information is holistically encoded. Unstructured complexity is thus more amenable to standard diagnostics than structured synergy; the crystalline order of XOR-type computation evades detection precisely because of its algebraic perfection.
 
 \begin{figure}[!htbp]
 \centering
@@ -1720,6 +1719,8 @@ Here $\kappa_{32}$ couples the deep layers ($x_3 \to x_2$) via \emph{variance mo
 
 \subsection{The Proximal Dominance Principle}
 
+The observation that proximal (bottom) layers dominate in hierarchical generative models is empirically well-documented in the VAE literature. \citet{sonderby2016ladder} noted that ``VAEs use the lower layers the most whereas the highest layers are not used''; \citet{zhao2017infovae} proved theoretically that ``the first layer contains all the information it needs to generate the data''; and \citet{havtorn2021hierarchical} explicitly stated that ``lowest latent variables learn generic features'' and ``low-level features dominate.'' Our contribution is to \emph{formalize} this observation as a principle with a specific diagnostic implication: for $L$-layer models, IC analysis of only the proximal layer suffices, reducing diagnostic complexity from $O(L^2)$ to $O(1)$.
+
 We simulated 16,000 trajectories across a $4 \times 4$ grid of coupling strengths ($\kappa \in \{0, 0.5, 1.0, 1.5\}$) and computed layer-wise IC values: $\IC_{32}$ (distal) and $\IC_{21}$ (proximal).
 
 \begin{table}[!htbp]
@@ -2077,7 +2078,7 @@ For Bayesian Neural Networks or large VAEs, compute IC \emph{between structural 
 
 \begin{figure}[!htbp]
 \centering
-\includegraphics[width=\textwidth]{fig15_workflow.pdf}
+\includegraphics[width=\textwidth]{fig2_workflow.pdf}
 \caption{\textbf{Prior predictive IC diagnostic workflow.} IC is computed from model structure before observing data. The interpretation is \emph{model-type specific}: for filtering models, high IC indicates essential coupling that MFVI will discard (failure); for pooling models, low IC indicates weak signal requiring shrinkage, while high IC indicates strong signal where hierarchy becomes redundant. Thresholds are domain-dependent guidelines.}
 \label{fig:workflow}
 \end{figure}
@@ -2168,7 +2169,7 @@ IC complements existing tools:
 
 IC shares formal structure with normalized information measures in adjacent fields. In \emph{privacy-preserving machine learning}, \textbf{Maximal Leakage} $\mathcal{L}(X \to Y) = \log \sum_y \max_x P(y|x)$ quantifies worst-case information disclosure; its normalized variants bound what fraction of sensitive information an adversary can extract. In \emph{feature selection}, \textbf{Proficiency} measures $I(X;Y)/H(Y)$ assess how completely a feature set captures target variation.
 
-For reference, the original v1.0 formulation used minimum-entropy normalization: $\text{CF} = I(Z;X)/\min(H(Z),H(X))$. While the Relational Invariance Theorem proves this normalization unnecessary for Gaussian inference diagnostics (since marginal entropies cancel), the normalization does correspond to the ``bottleneck'' perspective common to privacy and feature selection: information transfer is constrained by the lower-capacity channel. The Information Bottleneck method \citep{tishby1999information} formalizes this as optimizing $I(T;Y) - \beta I(T;X)$, trading compression against prediction.
+For reference, the original v1.0 formulation used minimum-entropy normalization: $\text{CF} = I(Z;X)/\min(H(Z),H(X))$. While the relational invariance property shows this normalization unnecessary for Gaussian inference diagnostics (since marginal entropies cancel), the normalization does correspond to the ``bottleneck'' perspective common to privacy and feature selection: information transfer is constrained by the lower-capacity channel. The Information Bottleneck method \citep{tishby1999information} formalizes this as optimizing $I(T;Y) - \beta I(T;X)$, trading compression against prediction.
 
 These connections suggest that the underlying mutual information $I(Z;X)$ may find applications beyond VI diagnostics---for instance, quantifying representation quality in hierarchical encoders or assessing privacy risk in Bayesian data release---where the entropy normalization may be more relevant than for inference prediction.
 
@@ -2332,7 +2333,7 @@ In any implemented system, coupling between variables must be:
     \item \textbf{CC} answers: ``How much control leverage exists?'' $\rightarrow$ predicts intervention effectiveness
 \end{itemize}
 
-\noindent The Relational Invariance Theorem proves that for inference diagnostics, only coupling strength matters---not the absolute scale of the investment. A system with $\rho = 0.8$ causes identical MFVI failure whether $I(Z;X) = 0.5$ nats (modest absolute coupling) or $I(Z;X) = 5$ nats (substantial investment).
+\noindent The relational invariance property shows that for inference diagnostics, only coupling strength matters---not the absolute scale of the investment. A system with $\rho = 0.8$ causes identical MFVI failure whether $I(Z;X) = 0.5$ nats (modest absolute coupling) or $I(Z;X) = 5$ nats (substantial investment).
 
 \paragraph{Architectural implications.} This separation has consequences for understanding system design. Biological systems invest considerable metabolic resources to establish and maintain cellular couplings: gap junctions require connexin proteins that must be synthesized and trafficked; synaptic connections require dendritic growth and neurotransmitter machinery; gene regulatory networks require transcription factor binding sites and signaling cascades. The existence of high IC in evolved systems implies that the coupling provides functional value exceeding its maintenance cost---otherwise selection would favor decoupled architectures.
 
@@ -2419,6 +2420,19 @@ We view cross-disciplinary validation as an important direction for establishing
 
 \paragraph{Bioelectric information flow.} Finally, the proximal dominance principle may inform understanding of biological information processing. In developmental systems, gap junction networks maintain ionic coupling across cellular hierarchies, potentially preserving the high-fidelity information flow that factorized approximations would attenuate. Whether such intercellular coupling mechanisms represent biological solutions to the structural constraints identified here---maintaining integrated inference across hierarchical scales---remains an open question for cross-disciplinary investigation.
 
+\paragraph{Broader applicability.}
+The precision matrix decomposition $\Lambda = D + R$ and the Computational Synergy Principle 
+suggest that IC may have diagnostic value beyond continuous Gaussian systems. In discrete 
+Boolean domains, analogous structure exists: functions that are affine over finite fields 
+exhibit the same ``pairwise-invisible, jointly-determined'' signature that the two-stage 
+protocol detects. This raises the possibility that IC---or its natural generalizations---could 
+serve as a predictor of approximation difficulty across inference, learning, and control 
+problems, wherever methods rely on local or pairwise structure to approximate globally 
+coupled systems. The relational structure $R$ that MFVI discards must, in any physical 
+implementation, be constructed and maintained by some substrate; understanding how biological 
+and engineered systems instantiate and preserve this structure may illuminate both the 
+diagnostic's scope and its limitations.
+
 %=============================================================================
 \section{Conclusion}
 \label{sec:conclusion}
@@ -2458,6 +2472,36 @@ This work introduces a diagnostic metric for assessing the suitability of mean-f
 E.~H. Linfoot.
 \newblock An informational measure of correlation.
 \newblock \emph{Information and Control}, 1(1):85--89, 1957.
+
+\bibitem[Gel'fand and Yaglom(1959)]{gelfand1959calculation}
+I.~M. Gel'fand and A.~M. Yaglom.
+\newblock Calculation of the amount of information about a random function contained in another such function.
+\newblock \emph{American Mathematical Society Translations}, 12(2):199--246, 1959.
+
+\bibitem[Wang and Titterington(2004)]{wang2004convergence}
+Bo~Wang and D.~Michael Titterington.
+\newblock Convergence and asymptotic normality of variational {Bayesian} approximations for exponential family models with missing values.
+\newblock In \emph{Proceedings of UAI}, pages 577--584, 2004.
+
+\bibitem[Turner and Sahani(2011)]{turner2011two}
+Richard~E. Turner and Maneesh Sahani.
+\newblock Two problems with variational expectation maximisation for time-series models.
+\newblock In \emph{Bayesian Time Series Models}, pages 109--130. Cambridge University Press, 2011.
+
+\bibitem[Havtorn et~al.(2021)]{havtorn2021hierarchical}
+Jakob~D. Havtorn, Jes Frellsen, S{\o}ren Hauberg, and Lars Maal{\o}e.
+\newblock Hierarchical {VAEs} know what they don't know.
+\newblock In \emph{Proceedings of ICML}, pages 4117--4128, 2021.
+
+\bibitem[S{\o}nderby et~al.(2016)]{sonderby2016ladder}
+Casper~Kaae S{\o}nderby, Tapani Raiko, Lars Maal{\o}e, S{\o}ren~Kaae S{\o}nderby, and Ole Winther.
+\newblock Ladder variational autoencoders.
+\newblock In \emph{Proceedings of NeurIPS}, pages 3738--3746, 2016.
+
+\bibitem[Zhao et~al.(2017)]{zhao2017infovae}
+Shengjia Zhao, Jiaming Song, and Stefano Ermon.
+\newblock Info{VAE}: Information maximizing variational autoencoders.
+\newblock \emph{arXiv preprint arXiv:1706.02262}, 2017.
 
 \bibitem[Joe(1989)]{joe1989estimation}
 H.~Joe.
@@ -2934,7 +2978,7 @@ For any joint distribution with positive marginal entropies, the original CF for
 \[
 0 \leq \text{CF}(Z, X) = \frac{I(Z;X)}{\min(H(Z), H(X))} \leq 1
 \]
-Note: For Gaussian systems, CF reduces to a function of $\IC = |\rho|$ alone, since the marginal entropies cancel in the mutual information (Theorem~\ref{thm:relational-invariance}).
+Note: For Gaussian systems, CF reduces to a function of $\IC = |\rho|$ alone, since the marginal entropies cancel in the mutual information (Proposition~\ref{prop:gaussian-mi}).
 \end{proposition}
 
 \begin{proof}
@@ -3494,6 +3538,13 @@ This occurs because both MFVI and oracle posteriors are Gaussian (Kalman filter 
 \begin{tcolorbox}[colback=blue!5!white, colframe=blue!50!black, title=Methodological Note]
 IC predicts the \emph{log-likelihood gap} ($r = 0.86$) rather than PSIS-$\hat{k}$. The log-likelihood gap is the appropriate diagnostic for Gaussian posteriors, as it directly measures the information-theoretic cost of mean-field factorization.
 \end{tcolorbox}
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=\textwidth]{figA5_psis_comparison.pdf}
+\caption{\textbf{IC vs.\ PSIS-$\hat{k}$ comparison.} IC correlates strongly with log-likelihood gap ($r = 0.86$), providing a pre-inference diagnostic for MFVI quality. PSIS-$\hat{k}$ values remain negative (indicating reliable importance sampling) even when MSE degradation is substantial, because both MFVI and oracle posteriors are Gaussian with light-tailed importance weights.}
+\label{fig:psis-comparison}
+\end{figure}
 
 \subsection{Classification Performance}
 
