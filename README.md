@@ -1,6 +1,6 @@
 # Circulatory Fidelity
 
-**A Prior Predictive Diagnostic for Mean-Field Variational Inference**
+**A Pre-Inference Diagnostic Framework for Mean-Field Variational Inference**
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.18121821.svg)](https://doi.org/10.5281/zenodo.18121821)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -9,13 +9,57 @@
 
 ## Overview
 
-Circulatory Fidelity (CF) is a diagnostic framework for predicting when mean-field variational inference (MFVI) will fail in hierarchical Bayesian models. The primary diagnostic metric is **Inference Coupling (IC)**, which quantifies structural dependencies between latent variables and observables.
+Circulatory Fidelity (CF) is a diagnostic framework for predicting when mean-field variational inference (MFVI) will fail in hierarchical Bayesian models. The framework is grounded in the precision matrix decomposition Λ = D + R, which separates *nodal* structure (D, retained by MFVI) from *relational* structure (R, discarded by MFVI).
 
-**Key insight**: High IC indicates tight coupling that MFVI's factorized approximation cannot capture, predicting inference failures *before* running expensive computations.
+The primary diagnostic metric is **Inference Coupling (IC)**, which quantifies the information-theoretic cost of discarding relational structure:
 
-**Resources:**
+```
+IC = |ρ|  (for Gaussian pairs)
+```
+
+**Key insight**: IC predicts MFVI failure *before* running expensive inference—directly from prior predictive samples or model parameters.
+
+### Resources
+
 - **GitHub**: https://github.com/Bwana7/Circulatory_Fidelity
 - **Zenodo**: https://zenodo.org/records/18121821
+- **Contact**: circulatoryfidelity@gmail.com
+
+---
+
+## Theoretical Foundation
+
+### The Precision Matrix Decomposition
+
+For a multivariate Gaussian with precision matrix Λ:
+
+```
+Λ = D + R
+```
+
+- **D** (diagonal): Nodal structure — retained by MFVI
+- **R** (off-diagonal): Relational structure — discarded by MFVI
+
+MFVI approximates the true posterior p(θ|y) with a factorized distribution q(θ) = ∏ᵢ qᵢ(θᵢ), effectively keeping D but discarding R. When R carries substantial information, this approximation fails.
+
+### Why IC Works
+
+Building on the classical result that Gaussian mutual information depends only on correlation—not on marginal variances (Gel'fand & Yaglom, 1959):
+
+```
+I(Z;X) = -½ log(1 - ρ²)
+```
+
+IC inherits this property: **MFVI failure depends on relational structure (IC), not nodal structure (marginal variances)**. The companion Balance Factor (B) characterizes architectural asymmetry but adds ΔR² ≈ 0 for predicting MFVI failure—an empirical confirmation of the theoretical invariance.
+
+### Connection to Linfoot Correlation
+
+IC coincides with the Linfoot informational correlation (Linfoot, 1957) for Gaussian systems, inheriting desirable properties:
+- Coordinate invariance
+- Bounded on [0, 1]
+- Extension to non-Gaussian distributions via copula estimation
+
+---
 
 ## Quick Start
 
@@ -44,25 +88,24 @@ ic, se = inference_coupling(z, x)
 ic = ic_gaussian(ρ)
 ```
 
+---
+
 ## Key Concepts
 
-### Inference Coupling (IC)
+### Model Type Matters: The Dependency Asymmetry
 
-For Gaussian pairs:
-```
-IC = |ρ| (Linfoot correlation)
-```
+A key theoretical contribution is recognizing that **high IC has opposite implications** depending on the dependency structure:
 
-IC measures how much knowing X reduces uncertainty about Z, normalized to [0,1].
+| Model Type | Dependency Axis | High IC Means | Recommendation |
+|------------|-----------------|---------------|----------------|
+| **Filtering** (SVF, state-space) | Vertical (layers) | Constitutive coupling—MFVI will fail | Use structured VI |
+| **Pooling** (HLM, random effects) | Horizontal (groups) | Inductive coupling—signal reliable | No-pooling acceptable |
 
-### Model Type Matters
+This **Dependency Asymmetry** is resolved by a novel taxonomy distinguishing:
+- **Constitutive coupling**: Variables co-determined by shared generative mechanism (filtering models)
+- **Inductive coupling**: Variables co-vary due to shared statistical regularity (pooling models)
 
-| Model Type | High IC Means | Recommendation |
-|------------|---------------|----------------|
-| **Filtering** (SVF) | MFVI will fail | Use structured VI |
-| **Pooling** (HLM) | Signal reliable | No-pooling acceptable |
-
-### Recommended Thresholds (Interpretive Scale)
+### Recommended Thresholds
 
 | IC Range | Coupling Regime | Interpretation |
 |----------|-----------------|----------------|
@@ -72,7 +115,79 @@ IC measures how much knowing X reduces uncertainty about Z, normalized to [0,1].
 | 0.55–0.70 | Strong | Consider structured inference |
 | > 0.70 | Very strong | Structured inference required |
 
-**Note**: These are general guidelines. For specific model classes (e.g., SVF, HLM), use domain-specific calibration. For pooling models, interpretation inverts: low IC indicates groups are similar (strong pooling needed).
+**Note**: For specific model classes (e.g., SVF threshold IC = 0.10, HLM threshold varies with failure definition), use domain-specific calibration from the validation studies.
+
+---
+
+## The Two-Stage Diagnostic Protocol
+
+### Detecting Synergistic Dependencies
+
+Standard pairwise IC can miss **synergistic** dependencies where information emerges only from joint variable configurations (e.g., XOR functions). The **Computational Synergy Principle** (Theorem 1 in manuscript) establishes:
+
+> Synergistic dependencies arise when the generative function is affine over GF(2), connecting Siegenthaler's correlation immunity from cryptography to information-theoretic synergy.
+
+The **Two-Stage Protocol** addresses this:
+
+```python
+from circulatory_fidelity import two_stage_diagnostic
+
+result = two_stage_diagnostic(z1, z2, x)
+
+# Stage 1: Pairwise IC
+print(f"Pairwise IC(z1, x): {result['ic_z1_x']:.3f}")
+print(f"Pairwise IC(z2, x): {result['ic_z2_x']:.3f}")
+
+# Stage 2: Interaction IC (only if Stage 1 shows low IC)
+print(f"Interaction IC(z1·z2, x): {result['ic_interaction']:.3f}")
+
+# Interpretation
+if result['synergy_detected']:
+    print("⚠️ XOR-type algebraic structure detected—MFVI inappropriate")
+```
+
+**Key signature**: Pairwise IC ≈ 0 combined with interaction IC > 0 **positively identifies** XOR-type algebraic structure.
+
+---
+
+## The Proximal Dominance Principle
+
+For deep hierarchies (L ≥ 3 layers), the **Proximal Dominance Principle** (formalizing documented observations in the VAE literature) provides dramatic diagnostic simplification:
+
+> MFVI failure is determined by coupling in the layer nearest observations. Distal coupling causes **exactly 1.0×** degradation when proximal coupling is absent (mathematically guaranteed), but acts as a **force multiplier** (1.01–2.26×) when proximal coupling is present.
+
+**Practical implication**: IC analysis of only the proximal layer suffices, reducing diagnostic complexity from O(L²) to O(1).
+
+```python
+# For a 3-layer model: z³ → z² → z¹ → y
+# Only need to check proximal coupling (z¹, y)
+ic_proximal, se = inference_coupling(z1_samples, y_samples)
+
+if ic_proximal > threshold:
+    print("Proximal coupling detected—check distal layers for amplification")
+else:
+    print("Proximal coupling absent—MFVI safe regardless of distal structure")
+```
+
+---
+
+## Time Series: The Maximal Coupling Rule
+
+For non-stationary time series with potential regime changes:
+
+```python
+from circulatory_fidelity import windowed_ic
+
+# Compute IC in rolling windows
+result = windowed_ic(z_series, x_series, window_size=50)
+
+print(f"IC_max = {result['ic_max']:.3f}")
+print(f"IC_mean = {result['ic_mean']:.3f}")
+```
+
+**The Maximal Coupling Rule**: MFVI suitability depends on `IC_max`, not the global average. A single high-IC episode (e.g., volatility spike) can invalidate mean-field approximations for the entire trajectory.
+
+---
 
 ## Installation
 
@@ -80,7 +195,12 @@ IC measures how much knowing X reduces uncertainty about Z, normalized to [0,1].
 
 ```bash
 pip install numpy scipy
-# Then copy circulatory_fidelity.py to your project
+# Clone repository and import circulatory_fidelity.py
+```
+
+Or using pyproject.toml:
+```bash
+pip install -e .
 ```
 
 ### Julia
@@ -90,35 +210,29 @@ using Pkg
 Pkg.add(url="https://github.com/Bwana7/Circulatory_Fidelity")
 ```
 
+---
+
 ## Estimation Methods
 
-### Copula-Based (Recommended for All Applications)
+### Copula-Based (Recommended Default)
 
 ```python
 ic, se = inference_coupling(x, y, method='copula')  # default
 ```
 
-Algorithm:
+**Algorithm**:
 1. Rank-transform to uniform marginals
 2. Apply probit (inverse normal CDF)
 3. Compute Pearson correlation
 4. IC = |ρ|
 
-**Key insight**: The copula method is **exact for Gaussian data** (differences < 0.001 from direct Pearson) AND provides conservative estimates for non-Gaussian data. This enables a **unified workflow** without needing to verify distributional assumptions.
+**Key insight**: The copula method is **exact for Gaussian data** AND provides **conservative estimates** for non-Gaussian data. This enables a **unified workflow** without needing to verify distributional assumptions.
 
-**Properties**:
-- Exact for Gaussians (returns |ρ|)
-- Conservative lower bound for non-Gaussians with monotonic dependence
-- Closed-form standard errors
-- Returns IC ≈ 0 for non-monotonic dependence (triggers Stage 2 protocol)
-
-### Pearson (Alternative for Verified Gaussians)
+### Pearson (Verified Gaussians Only)
 
 ```python
 ic, se = inference_coupling(x, y, method='pearson')
 ```
-
-Use only when Gaussianity has been verified. Mathematically equivalent to copula for Gaussian data, but biased for non-Gaussian marginals.
 
 ### KSG (For Validation)
 
@@ -126,127 +240,95 @@ Use only when Gaussianity has been verified. Mathematically equivalent to copula
 ic, se = inference_coupling(x, y, method='ksg')
 ```
 
-Use when:
-- Validating copula estimates
-- Suspected non-monotonic dependence
+**⚠️ Warning**: KSG exhibits 30–45% negative bias. Use copula as primary method; KSG for validation only.
 
-## Time Series: The Maximal Coupling Rule
-
-For non-stationary time series with potential regime changes, use **windowed IC**:
-
-```python
-from circulatory_fidelity import windowed_ic
-
-# Compute IC in rolling windows (minimum recommended: 50)
-result = windowed_ic(z_series, x_series, window_size=50)
-
-print(f"IC_max = {result['ic_max']:.3f}")
-print(f"IC_mean = {result['ic_mean']:.3f}")
-print(f"SE per window = {result['se_per_window']:.3f}")
-print(result['recommendation'])
-```
-
-**The Maximal Coupling Rule**: MFVI suitability depends on `IC_max`, not the global average. A single high-IC episode (e.g., volatility spike) can invalidate mean-field approximations for the entire trajectory.
-
-**Minimum window size**: Window must be large enough for stable correlation estimates. SE ≈ 1/√(W-3). For W < 30, estimates have high variance and may produce noise-driven false positives. We recommend W >= 50.
-
-### When to use windowed IC:
-- Sequential/temporal models (SVF, state-space models)
-- Models with potential regime changes
-- Non-stationary time series
-
-### When global IC suffices:
-- Equilibrated hierarchical models
-- Cross-sectional pooling problems
-- Stationary processes
-
-## High-Dimensional Data
-
-⚠️ **IMPORTANT**: For high-dimensional vectors, use dimensionality reduction first:
-
-```python
-from circulatory_fidelity import reduce_dimensions_pls
-
-# Reduce to 1D projections that preserve coupling
-# Cross-validation enabled by default to prevent overfitting
-z_reduced, x_reduced = reduce_dimensions_pls(Z, X, n_components=1, cross_validate=True)
-ic, se = inference_coupling(z_reduced, x_reduced)
-```
-
-The Manifold Hypothesis justifies supervised reduction (PLS/CCA) for preserving diagnostic-relevant structure. Cross-validation ensures the extracted components represent genuine coupling rather than spurious correlation.
-
-## Non-Monotonic Dependencies
-
-The copula estimator is invariant to monotonic transformations but returns IC ≈ 0 for non-monotonic relationships (e.g., Y = X²). Use the non-monotonic check:
-
-```python
-from circulatory_fidelity import check_nonmonotonic_dependence
-
-result = check_nonmonotonic_dependence(x, y)
-if result['nonmonotonic_flag']:
-    print("Non-monotonic dependence detected!")
-    print(f"Linear IC: {result['ic_linear']:.3f}")
-    print(f"Quadratic IC: {result['ic_quadratic']:.3f}")
-```
+---
 
 ## Repository Structure
 
 ```
-circulatory_fidelity/
-├── src/
-│   ├── python/
-│   │   ├── circulatory_fidelity.py    # Main Python implementation
-│   │   └── generate_figures.py        # Figure generation
-│   └── julia/
-│       └── CirculatoryFidelity.jl     # Julia implementation
-├── test/
-│   └── runtests.jl                    # Julia tests
+Circulatory_Fidelity/
+├── python/
+│   ├── circulatory_fidelity.py        # Main Python implementation
+│   ├── generate_figures.py            # Figure generation scripts
+│   └── test_circulatory_fidelity.py   # Test suite
+├── julia/
+│   └── CirculatoryFidelity.jl         # Julia implementation
 ├── notebooks/
-│   ├── 01_SVF_Case_Study.ipynb        # Stochastic volatility filter
-│   ├── 02_HLM_Case_Study.ipynb        # Hierarchical linear models
-│   ├── 03_Deep_Hierarchy_Case_Study.ipynb  # Proximal dominance
-│   ├── 04_Estimation_Methods_Comparison.ipynb  # Copula vs KSG
-│   ├── 05_Synergy_Higher_Order.ipynb  # Synergistic dependencies
-│   ├── 06_IC_LogLik_Validation.ipynb  # Post-inference validation
-│   └── data/                          # Notebook data files
-├── data/                              # Validation datasets
-├── figures/                           # Generated figures
+│   ├── 01_SVF_Case_Study.ipynb        # Stochastic volatility filter validation
+│   ├── 02_HLM_Case_Study.ipynb        # Hierarchical linear models validation
+│   ├── 03_Deep_Hierarchy_Case_Study.ipynb   # Proximal dominance validation
+│   ├── 04_Estimation_Methods_Comparison.ipynb  # Copula vs KSG comparison
+│   ├── 05_Synergy_Higher_Order.ipynb  # Synergistic dependencies & ECA
+│   └── 06_IC_LogLik_Validation.ipynb  # IC vs log-likelihood gap validation
+├── simulations/
+│   ├── svf_validation.csv             # SVF results (N = 8,000)
+│   ├── hlm_validation.csv             # HLM results (N = 8,000)
+│   ├── three_layer_validation.csv     # Three-layer results (N = 16,000)
+│   ├── ic_psis_comprehensive_validation.csv  # IC vs PSIS-k̂ (N = 900)
+│   ├── copula_validation.csv          # Copula method validation
+│   ├── threshold_calibration.csv      # Threshold calibration data
+│   ├── trigger_experiment.csv         # PCA vs PLS trigger experiment
+│   └── dsprites_proximal_dominance.csv  # dSprites VAE validation
+├── figures/
+│   ├── fig01_precision_decomposition.pdf
+│   ├── fig02_bottleneck.pdf
+│   ├── ...                            # All manuscript figures
+│   └── figA5_psis_comparison.pdf
 ├── paper/
-│   ├── Circulatory_Fidelity_v1_1.tex  # Manuscript source
-│   └── Circulatory_Fidelity_v1_1.pdf  # Compiled manuscript
-├── Project.toml                       # Julia project file
-├── README.md
-└── LICENSE
+│   ├── Circulatory_Fidelity_v1_1.tex  # Manuscript source (LaTeX)
+│   ├── Circulatory_Fidelity_v1_1.pdf  # Compiled manuscript
+│   └── tmlr.sty                       # TMLR style file
+├── Project.toml                       # Julia project configuration
+├── pyproject.toml                     # Python project configuration
+├── requirements.txt                   # Python dependencies
+├── CITATION.cff                       # Citation metadata
+├── LICENSE                            # MIT License
+└── README.md                          # This file
 ```
+
+---
 
 ## Key Results
 
 ### Validation Summary (N > 32,000 simulations)
 
-| Model | Correlation (IC vs Failure) | N |
-|-------|---------------------------|---|
-| SVF | r = 0.83 | 8,000 |
-| HLM | r = -0.76 | 8,000 |
-| Three-Layer | r = 0.89 | 16,000 |
-| IC vs Log-Lik Gap | r = 0.86 | 900 |
+| Model | Metric | Correlation with IC | N |
+|-------|--------|---------------------|---|
+| SVF (Filtering) | MSE Ratio | r = 0.83 | 8,000 |
+| HLM (Pooling) | MSE Ratio | r = −0.76 | 8,000 |
+| Three-Layer Hierarchy | MSE Ratio | r = 0.89 | 16,000 |
+| SVF | Log-Likelihood Gap | r = 0.86 | 900 |
 
-### Proximal Dominance Principle
+### Proximal Dominance Quantification
 
-For deep hierarchies with fully factorized MFVI:
-- **Proximal coupling alone**: Up to 40× MSE degradation
-- **Distal coupling alone**: Exactly 1.0× (zero degradation, mathematically guaranteed)
-- **Both present**: Distal amplifies proximal failure by 1.01–2.26×
+For three-layer hierarchies with fully factorized MFVI:
 
-**Key insight**: Distal coupling causes zero degradation when proximal coupling is absent, but acts as a force multiplier when proximal coupling is present.
+| Coupling Configuration | MSE Degradation |
+|------------------------|-----------------|
+| Proximal only (κ₂₁ > 0, κ₃₂ = 0) | Up to 40× |
+| Distal only (κ₂₁ = 0, κ₃₂ > 0) | Exactly 1.0× |
+| Both present | Distal amplifies by 1.01–2.26× |
+
+### Copula Estimation Accuracy
+
+| True ρ | Copula IC | Error |
+|--------|-----------|-------|
+| 0.30 | 0.2999 | < 0.001 |
+| 0.50 | 0.4998 | < 0.001 |
+| 0.70 | 0.6999 | < 0.001 |
+| 0.90 | 0.8999 | < 0.001 |
+
+---
 
 ## Citation
 
 ```bibtex
-@software{lowry_circulatory_fidelity_2025,
+@software{lowry_circulatory_fidelity_2026,
   author       = {Lowry, Aaron},
-  title        = {Circulatory Fidelity: A Relational Theory of Information 
-                  Flow in Hierarchical Models},
-  year         = {2025},
+  title        = {Circulatory Fidelity: A Pre-Inference Diagnostic Framework
+                  for Mean-Field Variational Inference},
+  year         = {2026},
   publisher    = {Zenodo},
   version      = {v1.1.0},
   doi          = {10.5281/zenodo.18121821},
@@ -254,11 +336,64 @@ For deep hierarchies with fully factorized MFVI:
 }
 ```
 
-## License
-
-MIT License - see [LICENSE](LICENSE) for details.
+---
 
 ## Version History
 
-- **v1.1** (2025): IC as primary metric, copula-based estimation, synergy detection
-- **v1.0** (2024): Initial release with CF = I(Z;X)/min(H(Z),H(X))
+### v1.1.0 (January 2026) — Current Release
+
+**Major theoretical restructuring** to ensure proper attribution and academic rigor:
+
+#### Terminology Changes
+- **Primary metric renamed**: "Circulatory Fidelity" (CF) → "Inference Coupling" (IC)
+- **Rationale**: IC = |ρ| is the Linfoot correlation, a standard metric; "CF" now refers to the overall diagnostic framework
+
+#### Attribution Corrections
+- **Relational Invariance**: Now properly attributed as application of Gel'fand & Yaglom (1959), not claimed as novel theorem
+- **Linfoot Equivalence**: Removed from contributions; properly attributed to Linfoot (1957)
+- **Proximal Dominance**: Acknowledges prior observations in VAE literature (Havtorn et al., 2021; Sønderby et al., 2016; Zhao et al., 2017); novel contribution is the O(L²) → O(1) complexity reduction claim
+
+#### Genuine Novel Contributions (Retained)
+1. **Computational Synergy Principle** — Novel interdisciplinary bridge connecting Siegenthaler's correlation immunity (cryptography) to information-theoretic synergy (PID)
+2. **Dependency Asymmetry Taxonomy** — Novel synthesis distinguishing constitutive vs. inductive coupling
+3. **Proximal Dominance Formalization** — Novel diagnostic complexity claim
+4. **Maximal Coupling Rule** — Novel time-series diagnostic principle
+
+#### Technical Improvements
+- **Copula estimation**: Now recommended as unified default (exact for Gaussians, conservative for non-Gaussians)
+- **Two-stage protocol**: Formalized for detecting synergistic dependencies
+- **Comprehensive validation**: 32,000+ simulations across three model classes
+- **DOIs added**: All key references now include DOI numbers
+
+#### New Content
+- Fluid–crystalline distinction in information topology (Rule 30 vs Rule 150)
+- Broader applicability discussion (discrete Boolean domains, biological systems)
+- IC vs PSIS-k̂ comparison (Appendix)
+
+---
+
+### v1.0.0 (December 2024) — Initial Release
+
+- Original formulation: CF = I(Z;X) / min(H(Z), H(X))
+- Entropy-normalized mutual information approach
+- Initial validation on stochastic volatility models
+
+#### Why v1.0 Was Superseded
+The original entropy normalization was theoretically motivated but practically unnecessary:
+1. For Gaussians, marginal entropies cancel in the normalization
+2. The Linfoot correlation |ρ| is sufficient and more interpretable
+3. Copula estimation enables unified workflow across distributions
+
+---
+
+## License
+
+MIT License — see [LICENSE](LICENSE) for details.
+
+---
+
+## Contact
+
+- **Author**: Aaron Lowry
+- **Email**: circulatoryfidelity@gmail.com
+- **Repository**: https://github.com/Bwana7/Circulatory_Fidelity
