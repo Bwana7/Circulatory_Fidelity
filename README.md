@@ -303,17 +303,6 @@ For three-layer hierarchies with fully factorized MFVI:
 - **Primary metric renamed**: "Circulatory Fidelity" (CF) → "Inference Coupling" (IC)
 - **Rationale**: IC = |ρ| is the Linfoot correlation, a standard metric; "CF" now refers to the overall diagnostic framework
 
-#### Attribution Corrections
-- **Relational Invariance**: Now properly attributed as application of Gel'fand & Yaglom (1959), not claimed as novel theorem
-- **Linfoot Equivalence**: Removed from contributions; properly attributed to Linfoot (1957)
-- **Proximal Dominance**: Acknowledges prior observations in VAE literature (Havtorn et al., 2021; Sønderby et al., 2016; Zhao et al., 2017); novel contribution is the O(L²) → O(1) complexity reduction claim
-
-#### Genuine Novel Contributions (Retained)
-1. **Computational Synergy Principle** — Novel interdisciplinary bridge connecting Siegenthaler's correlation immunity (cryptography) to information-theoretic synergy (PID)
-2. **Dependency Asymmetry Taxonomy** — Novel synthesis distinguishing constitutive vs. inductive coupling
-3. **Proximal Dominance Formalization** — Novel diagnostic complexity claim
-4. **Maximal Coupling Rule** — Novel time-series diagnostic principle
-
 #### Technical Improvements
 - **Copula estimation**: Now recommended as unified default (exact for Gaussians, conservative for non-Gaussians)
 - **Two-stage protocol**: Formalized for detecting synergistic dependencies
