@@ -91,19 +91,20 @@
 % Non-anonymous submissions will be rejected without review.
 
 \author{\name Aaron Lowry \\
-      \addr Independent Researcher}
+      \addr Independent Researcher \\
+      \email circulatoryfidelity@gmail.com}
 
 % The \author macro works with any number of authors. Use \AND 
 % to separate the names and addresses of multiple authors.
 
-\date{January 4, 2026}
+\date{January 13, 2026}
 
 \begin{document}
 
 \maketitle
 
 \begin{center}
-{\large Version 1.1 --- January 4, 2026}
+{\large Version 1.1 --- January 13, 2026}
 \end{center}
 \vspace{-1em}
 
@@ -114,7 +115,7 @@ In this decomposition, $D$ (diagonal) captures \emph{nodal} structure and $R$ (o
 
 We establish three novel theoretical contributions and one formalization: (1) The \textbf{Computational Synergy Principle}---synergistic dependencies arise when the generative function is affine over $\text{GF}(2)$, connecting Siegenthaler's correlation immunity from cryptography to information-theoretic synergy, and enabling a two-stage diagnostic where pairwise $\IC \approx 0$ combined with interaction $\IC > 0$ identifies XOR-type structure. (2) The \textbf{Dependency Asymmetry}---high IC predicts MFVI failure in filtering models but hierarchy redundancy in pooling models, resolved by a novel taxonomy distinguishing constitutive from inductive coupling. (3) The \textbf{Proximal Dominance Principle}---formalizing documented observations that proximal layers dominate in hierarchical models, we prove this reduces MFVI diagnostic complexity from $O(L^2)$ to $O(1)$; proximal coupling causes up to $40\times$ degradation while distal coupling causes exactly $1.0\times$ (mathematically guaranteed). (4) The \textbf{Maximal Coupling Rule}---for non-stationary series, MFVI suitability depends on $\IC_{\max}$, not global average.
 
-Validation spans stochastic volatility filters ($r = 0.86$ for log-likelihood gap, $N = 8{,}000$), hierarchical linear models, and three-layer hierarchies ($N = 32{,}000$+ total), yielding a practical pre-inference workflow. The framework clarifies a fundamental asymmetry: \emph{what you can learn} from a relationship (inference) depends only on coupling strength, while \emph{what you can do} through a relationship (control) depends on both coupling and scale.
+Validation spans stochastic volatility filters, hierarchical linear models, and three-layer hierarchies, yielding a practical pre-inference workflow. The framework clarifies a fundamental asymmetry: \emph{what you can learn} from a relationship (inference) depends only on coupling strength, while \emph{what you can do} through a relationship (control) depends on both coupling and scale.
 \end{abstract}
 
 %=============================================================================
@@ -1189,7 +1190,7 @@ This taxonomy (Table~\ref{tab:taxonomy}) transforms the Dependency Asymmetry fro
 \begin{figure}[!htbp]
 \centering
 \includegraphics[width=\textwidth]{fig09_unified.pdf}
-\caption{\textbf{Unified IC interpretation and decision framework} ($N = 8{,}000$ per model class). (A) SVF (filtering): High IC signals strong layer coupling---MFVI will lose information. Structured inference recommended above IC $ 0.10$ (95\% CI: 0.09--0.11 from bootstrap analysis). (B) HLM (pooling): Low IC signals weak signal reliability---no-pooling will overfit. Partial pooling recommended below IC $= 0.4$ (95\% CI varies with failure definition). The opposite directionality reflects different dependency axes (vertical vs horizontal), but IC consistently identifies consequential violations of independence.}
+\caption{\textbf{Unified IC interpretation and decision framework} ($N = 8{,}000$ per model class). (A) SVF (filtering): High IC signals strong layer coupling---MFVI will lose information. Structured inference recommended above $\IC = 0.10$ (95\% CI: 0.09--0.11 from bootstrap analysis). (B) HLM (pooling): Low IC signals weak signal reliability---no-pooling will overfit. Partial pooling recommended below IC $= 0.4$ (95\% CI varies with failure definition). The opposite directionality reflects different dependency axes (vertical vs horizontal), but IC consistently identifies consequential violations of independence.}
 \label{fig:unified}
 \end{figure}
 
@@ -2078,7 +2079,7 @@ For Bayesian Neural Networks or large VAEs, compute IC \emph{between structural 
 
 \begin{figure}[!htbp]
 \centering
-\includegraphics[width=\textwidth]{fig2_workflow.pdf}
+\includegraphics[width=\textwidth]{fig15_workflow.pdf}
 \caption{\textbf{Prior predictive IC diagnostic workflow.} IC is computed from model structure before observing data. The interpretation is \emph{model-type specific}: for filtering models, high IC indicates essential coupling that MFVI will discard (failure); for pooling models, low IC indicates weak signal requiring shrinkage, while high IC indicates strong signal where hierarchy becomes redundant. Thresholds are domain-dependent guidelines.}
 \label{fig:workflow}
 \end{figure}
@@ -2119,7 +2120,7 @@ For regime-switching models with known transition rates, $W$ should exceed the e
 \begin{figure}[!htbp]
 \centering
 \includegraphics[width=\textwidth]{fig16_windowed.pdf}
-\caption{\textbf{Windowed IC reveals hidden risk in non-stationary time series.} (A) Simulated returns with volatility regime changes---brief spikes in coupling during crisis periods. (B) Windowed IC computed over rolling windows of $W = 50$ timesteps. The threshold IC $ 0.50$ is exceeded during volatility spikes, even though global IC remains low. (C) Comparison of global average IC ($= 0.32$, below threshold, ``appears safe'') versus maximum windowed IC ($= 0.85$, above threshold, ``hidden catastrophe''). MFVI will fail during \emph{any} period where local IC exceeds the threshold; averaging over stable periods masks transient failures. The Maximal Coupling Rule mandates using $\IC_{\max}$ for time-series diagnostics.}
+\caption{\textbf{Windowed IC reveals hidden risk in non-stationary time series.} (A) Simulated returns with volatility regime changes---brief spikes in coupling during crisis periods. (B) Windowed IC computed over rolling windows of $W = 50$ timesteps. The threshold $\IC = 0.50$ is exceeded during volatility spikes, even though global IC remains low. (C) Comparison of global average IC ($= 0.32$, below threshold, ``appears safe'') versus maximum windowed IC ($= 0.85$, above threshold, ``hidden catastrophe''). MFVI will fail during \emph{any} period where local IC exceeds the threshold; averaging over stable periods masks transient failures. The Maximal Coupling Rule mandates using $\IC_{\max}$ for time-series diagnostics.}
 \label{fig:windowed}
 \end{figure}
 
@@ -2183,7 +2184,7 @@ This grants IC the capacity to scale to deep generative models with large parame
 
 \paragraph{Capability: Diagnosing gradient pathology.} High IC indicates that the true posterior possesses significant off-diagonal curvature in its Fisher Information Matrix---structure that the mean-field approximation ($G_{\text{MF}} \approx \text{diag}$) explicitly erases. This creates \emph{gradient misalignment}: the Euclidean gradient $\nabla_\theta \mathcal{L}$ diverges from the natural gradient $G^{-1}\nabla_\theta \mathcal{L}$.
 
-We quantified this relationship empirically. For bivariate Gaussians with varying correlation $\rho$, IC correlates strongly with the angle between Euclidean and natural gradients ($r = 0.90$, $p < 10^{-7}$). At IC $ 0.10$, mean gradient misalignment is $\approx 15^{\circ}$; at IC $ 0.50$, it exceeds $30^{\circ}$.
+We quantified this relationship empirically. For bivariate Gaussians with varying correlation $\rho$, IC correlates strongly with the angle between Euclidean and natural gradients ($r = 0.90$, $p < 10^{-7}$). At $\IC \approx 0.10$, mean gradient misalignment is $\approx 15^{\circ}$; at $\IC \approx 0.50$, it exceeds $30^{\circ}$.
 
 Thus, high IC signals not merely approximation error but \emph{optimization pathology}: the rugged energy landscape that standard gradient descent cannot efficiently navigate.
 
@@ -2472,6 +2473,7 @@ This work introduces a diagnostic metric for assessing the suitability of mean-f
 E.~H. Linfoot.
 \newblock An informational measure of correlation.
 \newblock \emph{Information and Control}, 1(1):85--89, 1957.
+\newblock \texttt{doi:10.1016/S0019-9958(57)90116-X}
 
 \bibitem[Gel'fand and Yaglom(1959)]{gelfand1959calculation}
 I.~M. Gel'fand and A.~M. Yaglom.
@@ -2507,26 +2509,31 @@ Shengjia Zhao, Jiaming Song, and Stefano Ermon.
 H.~Joe.
 \newblock Estimation of entropy and other functionals of a multivariate density.
 \newblock \emph{Annals of the Institute of Statistical Mathematics}, 41(4):683--697, 1989.
+\newblock \texttt{doi:10.1007/BF00057735}
 
 \bibitem[Cover and Thomas(2006)]{cover2006elements}
 Thomas~M. Cover and Joy~A. Thomas.
 \newblock \emph{Elements of Information Theory}.
 \newblock Wiley-Interscience, 2nd edition, 2006.
+\newblock \texttt{doi:10.1002/047174882X}
 
 \bibitem[Vehtari et~al.(2017)]{vehtari2017practical}
 Aki Vehtari, Andrew Gelman, and Jonah Gabry.
 \newblock Practical {Bayesian} model evaluation using leave-one-out cross-validation and {WAIC}.
 \newblock \emph{Statistics and Computing}, 27(5):1413--1432, 2017.
+\newblock \texttt{doi:10.1007/s11222-016-9696-4}
 
 \bibitem[Raudenbush and Bryk(1986)]{raudenbush1986hierarchical}
 Stephen~W. Raudenbush and Anthony~S. Bryk.
 \newblock A hierarchical model for studying school effects.
 \newblock \emph{Sociology of Education}, 59(1):1--17, 1986.
+\newblock \texttt{doi:10.2307/2112482}
 
 \bibitem[Siegenthaler(1984)]{siegenthaler1984correlation}
 Thomas Siegenthaler.
 \newblock Correlation-immunity of nonlinear combining functions for cryptographic applications.
 \newblock \emph{IEEE Transactions on Information Theory}, 30(5):776--780, 1984.
+\newblock \texttt{doi:10.1109/TIT.1984.1056927}
 
 \bibitem[Chor et~al.(1985)]{chor1985resilient}
 Benny Chor, Oded Goldreich, Johan H{\aa}stad, Joel Friedman, Steven Rudich, and Roman Smolensky.
@@ -2537,6 +2544,7 @@ Benny Chor, Oded Goldreich, Johan H{\aa}stad, Joel Friedman, Steven Rudich, and 
 David~M. Blei, Alp Kucukelbir, and Jon~D. McAuliffe.
 \newblock Variational inference: A review for statisticians.
 \newblock \emph{Journal of the American Statistical Association}, 112(518):859--877, 2017.
+\newblock \texttt{doi:10.1080/01621459.2017.1285773}
 
 \bibitem[Talts et~al.(2018)]{talts2018validating}
 Sean Talts, Michael Betancourt, Daniel Simpson, Aki Vehtari, and Andrew Gelman.
@@ -2547,6 +2555,7 @@ Sean Talts, Michael Betancourt, Daniel Simpson, Aki Vehtari, and Andrew Gelman.
 Tarald~O. Kvalseth.
 \newblock Entropy and correlation: Some comments.
 \newblock \emph{IEEE Transactions on Systems, Man, and Cybernetics}, 17(3):517--519, 1987.
+\newblock \texttt{doi:10.1109/TSMC.1987.4309069}
 
 \bibitem[Vinh et~al.(2010)]{vinh2010information}
 Nguyen~Xuan Vinh, Julien Epps, and James Bailey.
@@ -2557,6 +2566,7 @@ Nguyen~Xuan Vinh, Julien Epps, and James Bailey.
 Shun-ichi Amari.
 \newblock \emph{Information Geometry and Its Applications}.
 \newblock Springer, 2016.
+\newblock \texttt{doi:10.1007/978-4-431-55978-8}
 
 \bibitem[He et~al.(2019)]{he2019lagging}
 Junxian He, Daniel Spokoyny, Graham Neubig, and Taylor Berg-Kirkpatrick.
@@ -2577,6 +2587,7 @@ Paul~L. Williams and Randall~D. Beer.
 Samuel~R. Bowman, Luke Vilnis, Oriol Vinyals, Andrew~M. Dai, Rafal Jozefowicz, and Samy Bengio.
 \newblock Generating sentences from a continuous space.
 \newblock In \emph{Proceedings of CoNLL}, pages 10--21, 2016.
+\newblock \texttt{doi:10.18653/v1/K16-1002}
 
 \bibitem[Alemi et~al.(2018)]{alemi2018fixing}
 Alexander~A. Alemi, Ben Poole, Ian Fischer, Joshua~V. Dillon, Rif~A. Saurous, and Kevin Murphy.
@@ -2587,6 +2598,7 @@ Alexander~A. Alemi, Ben Poole, Ian Fischer, Joshua~V. Dillon, Rif~A. Saurous, an
 Christoph Mathys, Jean Daunizeau, Karl~J. Friston, and Klaas~E. Stephan.
 \newblock A {B}ayesian foundation for individual learning under uncertainty.
 \newblock \emph{Frontiers in Human Neuroscience}, 5:39, 2011.
+\newblock \texttt{doi:10.3389/fnhum.2011.00039}
 
 \bibitem[Tishby et~al.(1999)]{tishby1999information}
 Naftali Tishby, Fernando~C. Pereira, and William Bialek.
@@ -2597,11 +2609,13 @@ Naftali Tishby, Fernando~C. Pereira, and William Bialek.
 David~N. Reshef, Yakir~A. Reshef, Hilary~K. Finucane, Sharon~R. Grossman, Gilean McVean, Peter~J. Turnbaugh, Eric~S. Lander, Michael Mitzenmacher, and Pardis~C. Sabeti.
 \newblock Detecting novel associations in large data sets.
 \newblock \emph{Science}, 334(6062):1518--1524, 2011.
+\newblock \texttt{doi:10.1126/science.1205438}
 
 \bibitem[Sz{\'e}kely et~al.(2007)]{szekely2007measuring}
 G{\'a}bor~J. Sz{\'e}kely, Maria~L. Rizzo, and Nail~K. Bakirov.
 \newblock Measuring and testing dependence by correlation of distances.
 \newblock \emph{The Annals of Statistics}, 35(6):2769--2794, 2007.
+\newblock \texttt{doi:10.1214/009053607000000505}
 
 \bibitem[van den Berg et~al.(2025)]{vandenberg2025linfoot}
 St{\'e}phanie~M. van den Berg, Ulrich Halekoh, S{\"o}ren M{\"o}ller, Andreas~Kryger Jensen, and Jacob von~Bornemann Hjelmborg.
@@ -2617,6 +2631,7 @@ Lo{\"i}c Matthey, Irina Higgins, Demis Hassabis, and Alexander Lerchner.
 O.~Papaspiliopoulos, G.~O. Roberts, and M.~Sk\"{o}ld.
 \newblock A general framework for the parametrization of hierarchical models.
 \newblock \emph{Statistical Science}, 22(1):59--73, 2007.
+\newblock \texttt{doi:10.1214/088342306000000024}
 
 \bibitem[Betancourt and Girolami(2015)]{betancourt2015hamiltonian}
 M.~Betancourt and M.~Girolami.
@@ -2627,6 +2642,7 @@ M.~Betancourt and M.~Girolami.
 Y.~Yu and X.-L. Meng.
 \newblock To center or not to center: That is not the question---an ancillarity-sufficiency interweaving strategy ({ASIS}) for boosting {MCMC} efficiency.
 \newblock \emph{Journal of Computational and Graphical Statistics}, 20(3):531--570, 2011.
+\newblock \texttt{doi:10.1198/jcgs.2011.203main}
 
 \bibitem[Gorinova et~al.(2020)]{gorinova2020automatic}
 M.~I. Gorinova, D.~Moore, and M.~D. Hoffman.
@@ -2647,6 +2663,7 @@ Ryan Giordano, Tamara Broderick, and Michael~I. Jordan.
 Michael Levin.
 \newblock Gap junctional communication in morphogenesis.
 \newblock \emph{Progress in Biophysics and Molecular Biology}, 94(1--2):186--206, 2007.
+\newblock \texttt{doi:10.1016/j.pbiomolbio.2007.03.005}
 
 \end{thebibliography}
 %=============================================================================
