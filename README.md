@@ -244,51 +244,6 @@ ic, se = inference_coupling(x, y, method='ksg')
 
 ---
 
-## Repository Structure
-
-```
-Circulatory_Fidelity/
-├── python/
-│   ├── circulatory_fidelity.py        # Main Python implementation
-│   ├── generate_figures.py            # Figure generation scripts
-│   └── test_circulatory_fidelity.py   # Test suite
-├── julia/
-│   └── CirculatoryFidelity.jl         # Julia implementation
-├── notebooks/
-│   ├── 01_SVF_Case_Study.ipynb        # Stochastic volatility filter validation
-│   ├── 02_HLM_Case_Study.ipynb        # Hierarchical linear models validation
-│   ├── 03_Deep_Hierarchy_Case_Study.ipynb   # Proximal dominance validation
-│   ├── 04_Estimation_Methods_Comparison.ipynb  # Copula vs KSG comparison
-│   ├── 05_Synergy_Higher_Order.ipynb  # Synergistic dependencies & ECA
-│   └── 06_IC_LogLik_Validation.ipynb  # IC vs log-likelihood gap validation
-├── simulations/
-│   ├── svf_validation.csv             # SVF results (N = 8,000)
-│   ├── hlm_validation.csv             # HLM results (N = 8,000)
-│   ├── three_layer_validation.csv     # Three-layer results (N = 16,000)
-│   ├── ic_psis_comprehensive_validation.csv  # IC vs PSIS-k̂ (N = 900)
-│   ├── copula_validation.csv          # Copula method validation
-│   ├── threshold_calibration.csv      # Threshold calibration data
-│   ├── trigger_experiment.csv         # PCA vs PLS trigger experiment
-│   └── dsprites_proximal_dominance.csv  # dSprites VAE validation
-├── figures/
-│   ├── fig01_precision_decomposition.pdf
-│   ├── fig02_bottleneck.pdf
-│   ├── ...                            # All manuscript figures
-│   └── figA5_psis_comparison.pdf
-├── paper/
-│   ├── Circulatory_Fidelity_v1_1.tex  # Manuscript source (LaTeX)
-│   ├── Circulatory_Fidelity_v1_1.pdf  # Compiled manuscript
-│   └── tmlr.sty                       # TMLR style file
-├── Project.toml                       # Julia project configuration
-├── pyproject.toml                     # Python project configuration
-├── requirements.txt                   # Python dependencies
-├── CITATION.cff                       # Citation metadata
-├── LICENSE                            # MIT License
-└── README.md                          # This file
-```
-
----
-
 ## Key Results
 
 ### Validation Summary (N > 32,000 simulations)
