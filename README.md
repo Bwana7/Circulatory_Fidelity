@@ -1,6 +1,6 @@
 # Circulatory Fidelity
 
-**A Pre-Inference Diagnostic Framework for Mean-Field Variational Inference**
+**A Relational Theory of Information Flow in Hierarchical Models**
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.18121821.svg)](https://doi.org/10.5281/zenodo.18121821)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -281,8 +281,8 @@ For three-layer hierarchies with fully factorized MFVI:
 ```bibtex
 @software{lowry_circulatory_fidelity_2026,
   author       = {Lowry, Aaron},
-  title        = {Circulatory Fidelity: A Pre-Inference Diagnostic Framework
-                  for Mean-Field Variational Inference},
+  title        = {Circulatory Fidelity: A Relational Theory of Information
+	Flow in Hierarchical Models},
   year         = {2026},
   publisher    = {Zenodo},
   version      = {v1.1.0},
