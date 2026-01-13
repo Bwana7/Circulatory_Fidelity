@@ -282,7 +282,7 @@ For three-layer hierarchies with fully factorized MFVI:
 @software{lowry_circulatory_fidelity_2026,
   author       = {Lowry, Aaron},
   title        = {Circulatory Fidelity: A Relational Theory of Information
-	Flow in Hierarchical Models},
+                  Flow in Hierarchical Models},
   year         = {2026},
   publisher    = {Zenodo},
   version      = {v1.1.0},
